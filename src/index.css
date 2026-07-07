@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(1200px 600px at 100% -10%, rgba(251, 146, 60, 0.10), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(139, 92, 246, 0.10), transparent 60%),
+    linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  min-height: 100vh;
+}
+
+/* Custom scrollbar */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #fb923c, #f43f5e);
+  border-radius: 8px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Print styles for invoices */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; }
+}
+
+/* Decorative patterns */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.bg-dots {
+  background-image: radial-gradient(rgba(255,255,255,0.25) 1.2px, transparent 1.2px);
+  background-size: 18px 18px;
+}
+
+.bg-mesh {
+  background-color: #0f172a;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(251, 146, 60, 0.4) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(244, 63, 94, 0.4) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(139, 92, 246, 0.4) 0px, transparent 50%);
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.animate-float { animation: float 4s ease-in-out infinite; }
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.04); }
+}
+.animate-pulse-soft { animation: pulse-soft 2.4s ease-in-out infinite; }
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.5) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up { animation: slide-up 0.4s ease-out both; }
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 24px rgba(249, 115, 22, 0.25); }
+  50% { box-shadow: 0 0 36px rgba(249, 115, 22, 0.55); }
+}
+.animate-glow { animation: glow 2.4s ease-in-out infinite; }
+
+/* Card hover lift */
+.card-lift { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+.card-lift:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -10px rgba(15, 23, 42, 0.15); }
+
+/* Gradient text */
+.text-gradient-orange {
+  background: linear-gradient(135deg, #f97316, #e11d48);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.text-gradient-violet {
+  background: linear-gradient(135deg, #8b5cf6, #ec4899);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
