@@ -33,6 +33,18 @@ export default function Settings() {
 
   const handleCreateUser = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newUser.name.trim()) {
+      setMessage("Name is required");
+      return;
+    }
+    if (!newUser.email.trim()) {
+      setMessage("Email is required");
+      return;
+    }
+    if (!newUser.password.trim()) {
+      setMessage("Password is required");
+      return;
+    }
     const result = createUser({
       name: newUser.name.trim(),
       email: newUser.email.trim().toLowerCase(),

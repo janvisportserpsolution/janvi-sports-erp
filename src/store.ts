@@ -23,22 +23,24 @@ type AuthState = {
   logout: () => void;
 };
 
-const normalizeEmail = (value: string) => value.trim().toLowerCase();
+const normalizeEmail = (value?: string | null) => (value ?? "").trim().toLowerCase();
 
 const normalizeStoredUser = (user: User | null | undefined): User | null => {
   if (!user) return null;
 
-  const matchedUser = useData.getState().users.find(
-    (candidate) =>
-      candidate.id === user.id ||
-      normalizeEmail(candidate.email) === normalizeEmail(user.email) ||
-      candidate.mobile === user.mobile
-  );
+  const matchedUser = useData.getState().users.find((candidate) => {
+    const sameId = candidate.id === user.id;
+    const sameEmail = normalizeEmail(candidate.email) && normalizeEmail(user.email) && normalizeEmail(candidate.email) === normalizeEmail(user.email);
+    const sameMobile = Boolean(candidate.mobile && user.mobile && candidate.mobile === user.mobile);
+    return sameId || sameEmail || sameMobile;
+  });
 
   if (matchedUser) {
     return {
       ...user,
       ...matchedUser,
+      email: matchedUser.email ?? user.email ?? "",
+      mobile: matchedUser.mobile ?? user.mobile ?? "",
       role: matchedUser.role,
       permissions: matchedUser.permissions ?? [],
       is_active: matchedUser.is_active,
@@ -63,6 +65,7 @@ export const useAuth = create<AuthState>()(
       user: null,
       login: (email, password) => {
         const normalizedEmail = normalizeEmail(email);
+        if (!normalizedEmail || !password.trim()) return { ok: false, message: "Email and password are required" };
         const users = useData.getState().users;
         const user = users.find(
           (u) => normalizeEmail(u.email) === normalizedEmail && u.is_active && u.password_hash === password
@@ -249,11 +252,17 @@ export const useData = create<DataState>()(
       initialized: false,
 
       createUser: (input) => {
-        const existing = get().users.find((u) => normalizeEmail(u.email) === normalizeEmail(input.email));
+        const normalizedEmail = normalizeEmail(input.email);
+        if (!input.name.trim()) return { ok: false, message: "Name is required" };
+        if (!normalizedEmail) return { ok: false, message: "Email is required" };
+        if (!input.password_hash.trim()) return { ok: false, message: "Password is required" };
+        const existing = get().users.find((u) => normalizeEmail(u.email) === normalizedEmail);
         if (existing) return { ok: false, message: "A user with this email already exists" };
         const user: User = {
           ...input,
           id: uid("user"),
+          email: normalizedEmail,
+          mobile: input.mobile?.trim() ?? "",
           permissions: input.permissions ?? [],
           created_at: nowISO(),
           updated_at: nowISO(),
@@ -264,8 +273,14 @@ export const useData = create<DataState>()(
       updateUser: (id, patch) => {
         const target = get().users.find((u) => u.id === id);
         if (!target) return { ok: false, message: "User not found" };
+        if (patch.email !== undefined) {
+          const normalizedEmail = normalizeEmail(patch.email);
+          if (!normalizedEmail) return { ok: false, message: "Email is required" };
+          const duplicate = get().users.find((u) => u.id !== id && normalizeEmail(u.email) === normalizedEmail);
+          if (duplicate) return { ok: false, message: "A user with this email already exists" };
+        }
         set((s) => ({
-          users: s.users.map((u) => (u.id === id ? { ...u, ...patch, updated_at: nowISO() } : u)),
+          users: s.users.map((u) => (u.id === id ? { ...u, ...patch, email: normalizeEmail(patch.email) || u.email, mobile: patch.mobile ?? u.mobile, updated_at: nowISO() } : u)),
         }));
         return { ok: true, message: "User updated successfully" };
       },
