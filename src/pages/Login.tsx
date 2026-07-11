@@ -18,13 +18,19 @@ export default function Login() {
   const [email, setEmail] = useState("admin@janvisports.com");
   const [password, setPassword] = useState("admin123");
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const r = login(email.trim(), password);
-    if (r.ok) navigate("/");
-    else setError(r.message);
+    setIsSubmitting(true);
+    try {
+      const r = await login(email.trim(), password);
+      if (r.ok) navigate("/");
+      else setError(r.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -173,10 +179,11 @@ export default function Login() {
 
             <button
               type="submit"
+              disabled={isSubmitting}
               className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-4 py-3 text-sm font-bold text-white shadow-xl transition hover:shadow-2xl"
             >
               <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-              <LogIn size={16} /> Sign In
+              <LogIn size={16} /> {isSubmitting ? "Signing in..." : "Sign In"}
             </button>
 
             <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3 text-xs text-slate-600">

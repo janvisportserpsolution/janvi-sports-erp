@@ -16,11 +16,22 @@ import type {
 } from "./types";
 import { nowISO, uid } from "./utils/id";
 import { ALL_PERMISSIONS } from "./rbac";
+import {
+  appStateRef,
+  createSecondaryAuthUser,
+  ensureUserProfile,
+  logoutFirebase,
+  onFirebaseAuthChanged,
+  signInOrBootstrapDemoUser,
+  userProfileRef,
+} from "./firebase";
+import { getDoc, onSnapshot, setDoc } from "firebase/firestore";
 
 type AuthState = {
   user: User | null;
-  login: (email: string, password: string) => { ok: boolean; message: string };
-  logout: () => void;
+  authReady: boolean;
+  login: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
+  logout: () => Promise<void>;
 };
 
 const normalizeEmail = (value?: string | null) => (value ?? "").trim().toLowerCase();
@@ -92,23 +103,27 @@ export const useAuth = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      login: (email, password) => {
+      authReady: false,
+      login: async (email, password) => {
         const normalizedEmail = normalizeEmail(email);
         if (!normalizedEmail || !password.trim()) return { ok: false, message: "Email and password are required" };
-        const demoUser = getDemoUserByCredentials(email, password);
-        if (demoUser) {
-          set({ user: normalizeStoredUser(demoUser) });
-          return { ok: true, message: "Welcome back, " + demoUser.name };
+        try {
+          const user = await signInOrBootstrapDemoUser(normalizedEmail, password);
+          if (!user.is_active) {
+            await logoutFirebase();
+            set({ user: null });
+            return { ok: false, message: "This account is inactive" };
+          }
+          set({ user: normalizeStoredUser(user), authReady: true });
+          return { ok: true, message: "Welcome back, " + user.name };
+        } catch {
+          return { ok: false, message: "Invalid email or password" };
         }
-        const users = useData.getState().users;
-        const user = users.find(
-          (u) => normalizeEmail(u.email) === normalizedEmail && u.is_active && u.password_hash === password
-        );
-        if (!user) return { ok: false, message: "Invalid email or password" };
-        set({ user: normalizeStoredUser(user) });
-        return { ok: true, message: "Welcome back, " + user.name };
       },
-      logout: () => set({ user: null }),
+      logout: async () => {
+        await logoutFirebase().catch(() => undefined);
+        set({ user: null, authReady: true });
+      },
     }),
     {
       name: "janvi-auth",
@@ -116,6 +131,7 @@ export const useAuth = create<AuthState>()(
         ...(currentState as AuthState),
         ...(persistedState as Partial<AuthState>),
         user: normalizeStoredUser((persistedState as Partial<AuthState>).user ?? null),
+        authReady: false,
       }),
     }
   )
@@ -188,7 +204,7 @@ type DataState = {
   postCollectionToLedger: (session_id: string) => { ok: boolean; posted: number; message: string };
 
   // Users / RBAC
-  createUser: (input: Omit<User, "id" | "created_at" | "updated_at">) => { ok: boolean; message: string; user?: User };
+  createUser: (input: Omit<User, "id" | "created_at" | "updated_at">) => Promise<{ ok: boolean; message: string; user?: User }>;
   updateUser: (id: string, patch: Partial<User>) => { ok: boolean; message: string };
   deleteUser: (id: string) => { ok: boolean; message: string };
   setUserPermissions: (id: string, permissions: PermissionKey[]) => { ok: boolean; message: string };
@@ -285,22 +301,29 @@ export const useData = create<DataState>()(
       collectionRows: [],
       initialized: false,
 
-      createUser: (input) => {
+      createUser: async (input) => {
         const normalizedEmail = normalizeEmail(input.email);
         if (!input.name.trim()) return { ok: false, message: "Name is required" };
         if (!normalizedEmail) return { ok: false, message: "Email is required" };
         if (!input.password_hash.trim()) return { ok: false, message: "Password is required" };
         const existing = get().users.find((u) => normalizeEmail(u.email) === normalizedEmail);
         if (existing) return { ok: false, message: "A user with this email already exists" };
+        let firebaseUid = uid("user");
+        try {
+          firebaseUid = await createSecondaryAuthUser(normalizedEmail, input.password_hash);
+        } catch {
+          return { ok: false, message: "Could not create Firebase login for this user" };
+        }
         const user: User = {
           ...input,
-          id: uid("user"),
+          id: firebaseUid,
           email: normalizedEmail,
           mobile: input.mobile?.trim() ?? "",
           permissions: input.permissions ?? [],
           created_at: nowISO(),
           updated_at: nowISO(),
         };
+        await setDoc(userProfileRef(firebaseUid), user, { merge: true });
         set((s) => ({ users: [user, ...s.users] }));
         return { ok: true, message: "User created successfully", user };
       },
@@ -947,3 +970,136 @@ export const useData = create<DataState>()(
     }
   )
 );
+
+type PersistedDataState = Pick<
+  DataState,
+  | "users"
+  | "customers"
+  | "products"
+  | "inventoryTransactions"
+  | "invoices"
+  | "invoiceItems"
+  | "salesReturns"
+  | "salesReturnItems"
+  | "ledger"
+  | "collectionSessions"
+  | "collectionRows"
+  | "initialized"
+>;
+
+const persistedDataKeys: (keyof PersistedDataState)[] = [
+  "users",
+  "customers",
+  "products",
+  "inventoryTransactions",
+  "invoices",
+  "invoiceItems",
+  "salesReturns",
+  "salesReturnItems",
+  "ledger",
+  "collectionSessions",
+  "collectionRows",
+  "initialized",
+];
+
+const getPersistedDataSnapshot = (state: DataState): PersistedDataState => ({
+  users: state.users,
+  customers: state.customers,
+  products: state.products,
+  inventoryTransactions: state.inventoryTransactions,
+  invoices: state.invoices,
+  invoiceItems: state.invoiceItems,
+  salesReturns: state.salesReturns,
+  salesReturnItems: state.salesReturnItems,
+  ledger: state.ledger,
+  collectionSessions: state.collectionSessions,
+  collectionRows: state.collectionRows,
+  initialized: state.initialized,
+});
+
+const samePersistedData = (left: PersistedDataState, right: PersistedDataState) =>
+  persistedDataKeys.every((key) => JSON.stringify(left[key]) === JSON.stringify(right[key]));
+
+let firebaseStarted = false;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let applyingRemoteData = false;
+
+export const initializeFirebaseBackend = () => {
+  if (firebaseStarted) return;
+  firebaseStarted = true;
+
+  onFirebaseAuthChanged(async (firebaseUser) => {
+    if (!firebaseUser) {
+      useAuth.setState({ user: null, authReady: true });
+      return;
+    }
+
+    try {
+      const profile = await ensureUserProfile(firebaseUser);
+      useAuth.setState({ user: normalizeStoredUser(profile), authReady: true });
+      const users = useData.getState().users;
+      if (!users.some((user) => user.id === profile.id)) {
+        useData.setState({ users: [profile, ...users] });
+      }
+    } catch {
+      useAuth.setState({ user: null, authReady: true });
+    }
+  });
+
+  getDoc(appStateRef())
+    .then((snapshot) => {
+      if (snapshot.exists()) {
+        const cloudState = snapshot.data() as Partial<PersistedDataState>;
+        applyingRemoteData = true;
+        useData.setState({
+          users: cloudState.users?.length ? cloudState.users : useData.getState().users,
+          customers: cloudState.customers ?? [],
+          products: cloudState.products ?? [],
+          inventoryTransactions: cloudState.inventoryTransactions ?? [],
+          invoices: cloudState.invoices ?? [],
+          invoiceItems: cloudState.invoiceItems ?? [],
+          salesReturns: cloudState.salesReturns ?? [],
+          salesReturnItems: cloudState.salesReturnItems ?? [],
+          ledger: cloudState.ledger ?? [],
+          collectionSessions: cloudState.collectionSessions ?? [],
+          collectionRows: cloudState.collectionRows ?? [],
+          initialized: cloudState.initialized ?? true,
+        });
+        applyingRemoteData = false;
+      } else {
+        void setDoc(appStateRef(), { ...getPersistedDataSnapshot(useData.getState()), updated_at: nowISO() }, { merge: true });
+      }
+
+      useData.subscribe((state) => {
+        if (applyingRemoteData) return;
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+          void setDoc(appStateRef(), { ...getPersistedDataSnapshot(state), updated_at: nowISO() }, { merge: true });
+        }, 400);
+      });
+    })
+    .catch(() => undefined);
+
+  onSnapshot(appStateRef(), (snapshot) => {
+    if (!snapshot.exists()) return;
+    const cloudState = snapshot.data() as Partial<PersistedDataState>;
+    const nextState: PersistedDataState = {
+      users: cloudState.users?.length ? cloudState.users : useData.getState().users,
+      customers: cloudState.customers ?? [],
+      products: cloudState.products ?? [],
+      inventoryTransactions: cloudState.inventoryTransactions ?? [],
+      invoices: cloudState.invoices ?? [],
+      invoiceItems: cloudState.invoiceItems ?? [],
+      salesReturns: cloudState.salesReturns ?? [],
+      salesReturnItems: cloudState.salesReturnItems ?? [],
+      ledger: cloudState.ledger ?? [],
+      collectionSessions: cloudState.collectionSessions ?? [],
+      collectionRows: cloudState.collectionRows ?? [],
+      initialized: cloudState.initialized ?? true,
+    };
+    if (samePersistedData(getPersistedDataSnapshot(useData.getState()), nextState)) return;
+    applyingRemoteData = true;
+    useData.setState(nextState);
+    applyingRemoteData = false;
+  });
+};

@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth, useData } from "../store";
-import { canAccessRoute } from "../rbac";
 import {
   ArrowLeft,
   Phone,

@@ -196,6 +196,7 @@ function CustomerModal({ customer, onClose, onSave }: any) {
   const [form, setForm] = useState({
     name: customer.name || "",
     mobile: customer.mobile || "",
+    email: customer.email || "",
     address: customer.address || "",
   });
   return (

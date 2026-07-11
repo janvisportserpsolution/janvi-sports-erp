@@ -5,6 +5,8 @@ import { formatCurrency, formatShortDate } from "../utils/id";
 import { CustomerLedgerEntry } from "../types";
 import { Mail, MessageSquare, Printer, Send, Search, Edit3 } from "lucide-react";
 
+type StatementLedgerEntry = CustomerLedgerEntry & { running_balance: number };
+
 const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: "numeric",
   month: "short",
@@ -73,7 +75,7 @@ export default function Statements() {
   }, [customers, customerQuery]);
 
   const { filteredLedger, openingBalance, closingBalance, totalDebit, totalCredit, periodLabel } = useMemo(() => {
-    if (!selectedCustomer) return { filteredLedger: [] as CustomerLedgerEntry[], openingBalance: 0, closingBalance: 0, totalDebit: 0, totalCredit: 0, periodLabel: "" };
+    if (!selectedCustomer) return { filteredLedger: [] as StatementLedgerEntry[], openingBalance: 0, closingBalance: 0, totalDebit: 0, totalCredit: 0, periodLabel: "" };
 
     const customerLedger = ledger
       .filter((entry) => entry.customer_id === selectedCustomer.id)
@@ -269,9 +271,8 @@ export default function Statements() {
       const emailTask = new Promise<void>(async (resolve, reject) => {
         try {
           if (!contact.email) throw new Error("Customer email is required for Email");
-          const { pdfMake, docDefinition, fileName } = await buildDocDefinition();
-          await new Promise<void>((res) => pdfMake.createPdf(docDefinition).getBlob((blob: Blob) => {
-            // Simulate email attachment upload and send
+          const { pdfMake, docDefinition } = await buildDocDefinition();
+          await new Promise<void>((res) => pdfMake.createPdf(docDefinition).getBlob(() => {
             window.setTimeout(res, 900);
           }));
           setStatus((prev) => ({ ...prev, email: "Sent ✅" }));

@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Boxes,
@@ -37,14 +37,11 @@ export default function Layout() {
   const user = useAuth((s) => s.user);
   const logout = useAuth((s) => s.logout);
   const navigate = useNavigate();
-  const location = useLocation();
   const [open, setOpen] = useState(false);
 
   const products = useData((s) => s.products);
   const lowStock = products.filter((p) => p.is_active && p.stock_quantity <= p.low_stock_threshold).length;
   const visibleNav = nav.filter((item) => canAccessRoute(user, item.to));
-  const canViewSettings = canAccessRoute(user, "/settings");
-
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}

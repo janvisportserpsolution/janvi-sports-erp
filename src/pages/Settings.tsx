@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useAuth, useData } from "../store";
+import { useData } from "../store";
 import { ALL_PERMISSIONS, ROLE_DEFINITIONS } from "../rbac";
 import type { PermissionKey, RoleName } from "../types";
 import { Database, Trash2, AlertTriangle, Building2, ShieldCheck, UserPlus, Trash2 as TrashIcon, KeyRound } from "lucide-react";
@@ -14,8 +14,6 @@ export default function Settings() {
   const createUser = useData((s) => s.createUser);
   const updateUser = useData((s) => s.updateUser);
   const deleteUser = useData((s) => s.deleteUser);
-  const setUserPermissions = useData((s) => s.setUserPermissions);
-  const currentUser = useAuth((s) => s.user);
   const [message, setMessage] = useState<string | null>(null);
   const [newUser, setNewUser] = useState({ name: "", email: "", password: "", role: "tour_user" as RoleName });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -31,7 +29,7 @@ export default function Settings() {
     }
   };
 
-  const handleCreateUser = (e: React.FormEvent) => {
+  const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUser.name.trim()) {
       setMessage("Name is required");
@@ -45,7 +43,7 @@ export default function Settings() {
       setMessage("Password is required");
       return;
     }
-    const result = createUser({
+    const result = await createUser({
       name: newUser.name.trim(),
       email: newUser.email.trim().toLowerCase(),
       mobile: "",

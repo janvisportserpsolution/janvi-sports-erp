@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useEffect } from "react";
-import { useAuth, useData } from "./store";
+import { initializeFirebaseBackend, useAuth, useData } from "./store";
 import { canAccessRoute } from "./rbac";
 
 const ROUTE_ORDER = [
@@ -33,13 +33,17 @@ import CollectionView from "./pages/CollectionView";
 
 function Protected({ children }: { children: React.ReactNode }) {
   const user = useAuth((s) => s.user);
+  const authReady = useAuth((s) => s.authReady);
+  if (!authReady) return <div className="p-10 text-center text-slate-600">Connecting securely...</div>;
   if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 function RequirePermission({ children }: { children: React.ReactNode }) {
   const user = useAuth((s) => s.user);
+  const authReady = useAuth((s) => s.authReady);
   const location = useLocation();
+  if (!authReady) return <div className="p-10 text-center text-slate-600">Connecting securely...</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (!canAccessRoute(user, location.pathname)) {
     const firstAllowed = ROUTE_ORDER.find((path) => canAccessRoute(user, path));
@@ -51,6 +55,10 @@ function RequirePermission({ children }: { children: React.ReactNode }) {
 export default function App() {
   const seed = useData((s) => s.seed);
   const initialized = useData((s) => s.initialized);
+  useEffect(() => {
+    initializeFirebaseBackend();
+  }, []);
+
   useEffect(() => {
     if (!initialized) seed();
   }, [initialized, seed]);
