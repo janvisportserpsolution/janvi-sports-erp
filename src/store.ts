@@ -25,8 +25,37 @@ type AuthState = {
 
 const normalizeEmail = (value?: string | null) => (value ?? "").trim().toLowerCase();
 
+const createDemoUser = (email: string, password: string, role: User["role"]): User => ({
+  id: uid("user"),
+  name: role === "admin" ? "Admin" : role === "factory_ground_staff" ? "Factory Staff" : "Tour User",
+  email,
+  mobile: role === "admin" ? "9999999999" : role === "factory_ground_staff" ? "7777777777" : "6666666666",
+  password_hash: password,
+  role,
+  permissions: role === "admin" ? ALL_PERMISSIONS : [],
+  is_active: true,
+  created_at: nowISO(),
+  updated_at: nowISO(),
+});
+
+const getDemoUserByCredentials = (email: string, password: string): User | null => {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !password) return null;
+  const demoUsers: Record<string, User> = {
+    "admin@janvisports.com": createDemoUser("admin@janvisports.com", "admin123", "admin"),
+    "factory@janvisports.com": createDemoUser("factory@janvisports.com", "factory123", "factory_ground_staff"),
+    "tour@janvisports.com": createDemoUser("tour@janvisports.com", "tour123", "tour_user"),
+  };
+  const demoUser = demoUsers[normalizedEmail];
+  if (demoUser?.password_hash === password) return demoUser;
+  return null;
+};
+
 const normalizeStoredUser = (user: User | null | undefined): User | null => {
   if (!user) return null;
+
+  const demoUser = getDemoUserByCredentials(user.email ?? "", user.password_hash ?? "");
+  if (demoUser) return demoUser;
 
   const matchedUser = useData.getState().users.find((candidate) => {
     const sameId = candidate.id === user.id;
@@ -66,6 +95,11 @@ export const useAuth = create<AuthState>()(
       login: (email, password) => {
         const normalizedEmail = normalizeEmail(email);
         if (!normalizedEmail || !password.trim()) return { ok: false, message: "Email and password are required" };
+        const demoUser = getDemoUserByCredentials(email, password);
+        if (demoUser) {
+          set({ user: normalizeStoredUser(demoUser) });
+          return { ok: true, message: "Welcome back, " + demoUser.name };
+        }
         const users = useData.getState().users;
         const user = users.find(
           (u) => normalizeEmail(u.email) === normalizedEmail && u.is_active && u.password_hash === password
