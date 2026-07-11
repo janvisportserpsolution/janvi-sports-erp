@@ -15,14 +15,14 @@ import {
 export default function Login() {
   const login = useAuth((s) => s.login);
   const navigate = useNavigate();
-  const [mobile, setMobile] = useState("9999999999");
+  const [email, setEmail] = useState("admin@janvisports.com");
   const [password, setPassword] = useState("admin123");
   const [error, setError] = useState<string | null>(null);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const r = login(mobile, password);
+    const r = login(email.trim(), password);
     if (r.ok) navigate("/");
     else setError(r.message);
   };
@@ -139,17 +139,17 @@ export default function Login() {
             <Sparkles size={11} /> Welcome back
           </div>
           <h2 className="mt-3 text-3xl font-extrabold text-slate-900">Sign in to your store</h2>
-          <p className="mt-1 text-sm text-slate-500">Use your mobile number and password to continue.</p>
+          <p className="mt-1 text-sm text-slate-500">Use your email address and password to continue.</p>
 
           <form onSubmit={submit} className="mt-8 space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-600">Mobile</label>
+              <label className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-600">Email</label>
               <input
-                type="tel"
-                value={mobile}
-                onChange={(e) => setMobile(e.target.value)}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm transition focus:border-orange-500 focus:outline-none focus:ring-4 focus:ring-orange-100"
-                placeholder="9999999999"
+                placeholder="name@company.com"
                 required
               />
             </div>
@@ -183,7 +183,7 @@ export default function Login() {
               <div className="mb-1 flex items-center gap-1 font-bold text-slate-700">
                 <Sparkles size={11} className="text-orange-500" /> Demo credentials
               </div>
-              <div>Mobile: <span className="font-mono font-bold text-slate-900">9999999999</span></div>
+              <div>Email: <span className="font-mono font-bold text-slate-900">admin@janvisports.com</span></div>
               <div>Password: <span className="font-mono font-bold text-slate-900">admin123</span></div>
             </div>
           </form>

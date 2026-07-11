@@ -157,7 +157,7 @@ export default function Layout() {
             </div>
             <div className="flex-1 overflow-hidden">
               <div className="truncate text-sm font-bold text-slate-900">{user?.name}</div>
-              <div className="truncate text-[11px] text-slate-500">{user?.mobile}</div>
+              <div className="truncate text-[11px] text-slate-500">{user?.email || user?.mobile}</div>
               <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-orange-600">
                 {user?.role ? getRoleLabel(user.role) : "User"}
               </div>

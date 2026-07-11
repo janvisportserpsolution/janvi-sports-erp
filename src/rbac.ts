@@ -72,7 +72,8 @@ export const ROUTE_PERMISSIONS: Record<string, PermissionKey> = {
 export function getUserPermissions(user: Pick<User, "role" | "permissions"> | null | undefined): PermissionKey[] {
   if (!user) return [];
   if (user.role === "admin") return ALL_PERMISSIONS;
-  const basePermissions = ROLE_DEFINITIONS[user.role]?.permissions ?? [];
+  const role = typeof user.role === "string" ? user.role : undefined;
+  const basePermissions = ROLE_DEFINITIONS[role as RoleName]?.permissions ?? [];
   return Array.from(new Set([...basePermissions, ...(user.permissions ?? [])]));
 }
 

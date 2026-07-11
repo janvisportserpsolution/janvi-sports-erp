@@ -30,6 +30,7 @@ export type RoleDefinition = {
 export type User = {
   id: string;
   name: string;
+  email: string;
   mobile: string;
   password_hash: string;
   role: RoleName;

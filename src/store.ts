@@ -15,30 +15,72 @@ import type {
   CollectionRow,
 } from "./types";
 import { nowISO, uid } from "./utils/id";
-import { getUserPermissions, ROLE_DEFINITIONS } from "./rbac";
+import { ALL_PERMISSIONS } from "./rbac";
 
 type AuthState = {
   user: User | null;
-  login: (mobile: string, password: string) => { ok: boolean; message: string };
+  login: (email: string, password: string) => { ok: boolean; message: string };
   logout: () => void;
+};
+
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
+const normalizeStoredUser = (user: User | null | undefined): User | null => {
+  if (!user) return null;
+
+  const matchedUser = useData.getState().users.find(
+    (candidate) =>
+      candidate.id === user.id ||
+      normalizeEmail(candidate.email) === normalizeEmail(user.email) ||
+      candidate.mobile === user.mobile
+  );
+
+  if (matchedUser) {
+    return {
+      ...user,
+      ...matchedUser,
+      role: matchedUser.role,
+      permissions: matchedUser.permissions ?? [],
+      is_active: matchedUser.is_active,
+    };
+  }
+
+  if (normalizeEmail(user.email) === "admin@janvisports.com" && user.password_hash === "admin123") {
+    return {
+      ...user,
+      role: "admin",
+      permissions: ALL_PERMISSIONS,
+      is_active: true,
+    };
+  }
+
+  return user;
 };
 
 export const useAuth = create<AuthState>()(
   persist(
     (set) => ({
       user: null,
-      login: (mobile, password) => {
+      login: (email, password) => {
+        const normalizedEmail = normalizeEmail(email);
         const users = useData.getState().users;
         const user = users.find(
-          (u) => u.mobile === mobile && u.is_active && u.password_hash === password
+          (u) => normalizeEmail(u.email) === normalizedEmail && u.is_active && u.password_hash === password
         );
-        if (!user) return { ok: false, message: "Invalid mobile or password" };
-        set({ user });
+        if (!user) return { ok: false, message: "Invalid email or password" };
+        set({ user: normalizeStoredUser(user) });
         return { ok: true, message: "Welcome back, " + user.name };
       },
       logout: () => set({ user: null }),
     }),
-    { name: "janvi-auth" }
+    {
+      name: "janvi-auth",
+      merge: (persistedState, currentState) => ({
+        ...(currentState as AuthState),
+        ...(persistedState as Partial<AuthState>),
+        user: normalizeStoredUser((persistedState as Partial<AuthState>).user ?? null),
+      }),
+    }
   )
 );
 
@@ -123,6 +165,7 @@ const seedUsers = (): User[] => [
   {
     id: uid("user"),
     name: "Admin",
+    email: "admin@janvisports.com",
     mobile: "9999999999",
     password_hash: "admin123",
     role: "admin",
@@ -134,6 +177,7 @@ const seedUsers = (): User[] => [
   {
     id: uid("user"),
     name: "Factory Staff",
+    email: "factory@janvisports.com",
     mobile: "7777777777",
     password_hash: "factory123",
     role: "factory_ground_staff",
@@ -145,6 +189,7 @@ const seedUsers = (): User[] => [
   {
     id: uid("user"),
     name: "Tour User",
+    email: "tour@janvisports.com",
     mobile: "6666666666",
     password_hash: "tour123",
     role: "tour_user",
@@ -204,8 +249,8 @@ export const useData = create<DataState>()(
       initialized: false,
 
       createUser: (input) => {
-        const existing = get().users.find((u) => u.mobile === input.mobile);
-        if (existing) return { ok: false, message: "A user with this mobile already exists" };
+        const existing = get().users.find((u) => normalizeEmail(u.email) === normalizeEmail(input.email));
+        if (existing) return { ok: false, message: "A user with this email already exists" };
         const user: User = {
           ...input,
           id: uid("user"),
@@ -222,9 +267,6 @@ export const useData = create<DataState>()(
         set((s) => ({
           users: s.users.map((u) => (u.id === id ? { ...u, ...patch, updated_at: nowISO() } : u)),
         }));
-        if (get().users.find((u) => u.id === id)?.mobile === get().users.find((u) => u.id === id)?.mobile) {
-          // no-op to satisfy state update flow
-        }
         return { ok: true, message: "User updated successfully" };
       },
       deleteUser: (id) => {

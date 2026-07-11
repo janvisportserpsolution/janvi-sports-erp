@@ -17,7 +17,7 @@ export default function Settings() {
   const setUserPermissions = useData((s) => s.setUserPermissions);
   const currentUser = useAuth((s) => s.user);
   const [message, setMessage] = useState<string | null>(null);
-  const [newUser, setNewUser] = useState({ name: "", mobile: "", password: "", role: "tour_user" as RoleName });
+  const [newUser, setNewUser] = useState({ name: "", email: "", password: "", role: "tour_user" as RoleName });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editingRole, setEditingRole] = useState<RoleName>("tour_user");
   const [editingPermissions, setEditingPermissions] = useState<PermissionKey[]>([]);
@@ -35,7 +35,8 @@ export default function Settings() {
     e.preventDefault();
     const result = createUser({
       name: newUser.name.trim(),
-      mobile: newUser.mobile.trim(),
+      email: newUser.email.trim().toLowerCase(),
+      mobile: "",
       password_hash: newUser.password,
       role: newUser.role,
       permissions: [],
@@ -43,7 +44,7 @@ export default function Settings() {
     });
     setMessage(result.message);
     if (result.ok) {
-      setNewUser({ name: "", mobile: "", password: "", role: "tour_user" });
+      setNewUser({ name: "", email: "", password: "", role: "tour_user" });
     }
   };
 
@@ -134,9 +135,10 @@ export default function Settings() {
                 required
               />
               <input
-                value={newUser.mobile}
-                onChange={(e) => setNewUser((prev) => ({ ...prev, mobile: e.target.value }))}
-                placeholder="Mobile number"
+                type="email"
+                value={newUser.email}
+                onChange={(e) => setNewUser((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="name@company.com"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
                 required
               />
@@ -170,7 +172,7 @@ export default function Settings() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="font-semibold text-slate-900">{entry.name}</div>
-                    <div className="text-sm text-slate-500">{entry.mobile}</div>
+                    <div className="text-sm text-slate-500">{entry.email || entry.mobile}</div>
                     <div className="mt-1 text-xs font-semibold uppercase tracking-wide text-orange-600">{entry.role}</div>
                   </div>
                   <div className="flex gap-2">
