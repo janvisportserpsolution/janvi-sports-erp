@@ -153,6 +153,7 @@ type DataState = {
   collectionRows: CollectionRow[];
 
   initialized: boolean;
+  syncReady: boolean;
 
   // Customers
   addCustomer: (data: Omit<Customer, "id" | "created_at" | "updated_at" | "credit_balance"> & { credit_balance?: number }) => Customer;
@@ -300,6 +301,7 @@ export const useData = create<DataState>()(
       collectionSessions: [],
       collectionRows: [],
       initialized: false,
+      syncReady: false,
 
       createUser: async (input) => {
         const normalizedEmail = normalizeEmail(input.email);
@@ -1023,6 +1025,37 @@ const samePersistedData = (left: PersistedDataState, right: PersistedDataState) 
 let firebaseStarted = false;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let applyingRemoteData = false;
+let cloudReady = false;
+let lastCloudData: PersistedDataState | null = null;
+
+const toPersistedDataState = (cloudState: Partial<PersistedDataState>): PersistedDataState => ({
+  users: cloudState.users?.length ? cloudState.users : useData.getState().users,
+  customers: cloudState.customers ?? [],
+  products: cloudState.products ?? [],
+  inventoryTransactions: cloudState.inventoryTransactions ?? [],
+  invoices: cloudState.invoices ?? [],
+  invoiceItems: cloudState.invoiceItems ?? [],
+  salesReturns: cloudState.salesReturns ?? [],
+  salesReturnItems: cloudState.salesReturnItems ?? [],
+  ledger: cloudState.ledger ?? [],
+  collectionSessions: cloudState.collectionSessions ?? [],
+  collectionRows: cloudState.collectionRows ?? [],
+  initialized: cloudState.initialized ?? true,
+});
+
+const queueCloudSave = (state: DataState) => {
+  if (!cloudReady || applyingRemoteData) return;
+  const data = getPersistedDataSnapshot(state);
+  if (lastCloudData && samePersistedData(data, lastCloudData)) return;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const latestData = getPersistedDataSnapshot(useData.getState());
+    if (lastCloudData && samePersistedData(latestData, lastCloudData)) return;
+    void setDoc(appStateRef(), { ...latestData, updated_at: nowISO() }, { merge: true }).then(() => {
+      lastCloudData = latestData;
+    });
+  }, 100);
+};
 
 export const initializeFirebaseBackend = () => {
   if (firebaseStarted) return;
@@ -1049,54 +1082,34 @@ export const initializeFirebaseBackend = () => {
   getDoc(appStateRef())
     .then((snapshot) => {
       if (snapshot.exists()) {
-        const cloudState = snapshot.data() as Partial<PersistedDataState>;
+        const nextState = toPersistedDataState(snapshot.data() as Partial<PersistedDataState>);
+        lastCloudData = nextState;
         applyingRemoteData = true;
-        useData.setState({
-          users: cloudState.users?.length ? cloudState.users : useData.getState().users,
-          customers: cloudState.customers ?? [],
-          products: cloudState.products ?? [],
-          inventoryTransactions: cloudState.inventoryTransactions ?? [],
-          invoices: cloudState.invoices ?? [],
-          invoiceItems: cloudState.invoiceItems ?? [],
-          salesReturns: cloudState.salesReturns ?? [],
-          salesReturnItems: cloudState.salesReturnItems ?? [],
-          ledger: cloudState.ledger ?? [],
-          collectionSessions: cloudState.collectionSessions ?? [],
-          collectionRows: cloudState.collectionRows ?? [],
-          initialized: cloudState.initialized ?? true,
-        });
+        useData.setState(nextState);
         applyingRemoteData = false;
       } else {
-        void setDoc(appStateRef(), { ...getPersistedDataSnapshot(useData.getState()), updated_at: nowISO() }, { merge: true });
+        lastCloudData = getPersistedDataSnapshot(useData.getState());
+        void setDoc(appStateRef(), { ...lastCloudData, updated_at: nowISO() }, { merge: true });
       }
 
-      useData.subscribe((state) => {
-        if (applyingRemoteData) return;
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-          void setDoc(appStateRef(), { ...getPersistedDataSnapshot(state), updated_at: nowISO() }, { merge: true });
-        }, 400);
-      });
+      cloudReady = true;
+      useData.setState({ syncReady: true });
+      useData.subscribe(queueCloudSave);
     })
-    .catch(() => undefined);
+    .catch(() => {
+      cloudReady = true;
+      useData.setState({ syncReady: true });
+    });
 
   onSnapshot(appStateRef(), (snapshot) => {
     if (!snapshot.exists()) return;
-    const cloudState = snapshot.data() as Partial<PersistedDataState>;
-    const nextState: PersistedDataState = {
-      users: cloudState.users?.length ? cloudState.users : useData.getState().users,
-      customers: cloudState.customers ?? [],
-      products: cloudState.products ?? [],
-      inventoryTransactions: cloudState.inventoryTransactions ?? [],
-      invoices: cloudState.invoices ?? [],
-      invoiceItems: cloudState.invoiceItems ?? [],
-      salesReturns: cloudState.salesReturns ?? [],
-      salesReturnItems: cloudState.salesReturnItems ?? [],
-      ledger: cloudState.ledger ?? [],
-      collectionSessions: cloudState.collectionSessions ?? [],
-      collectionRows: cloudState.collectionRows ?? [],
-      initialized: cloudState.initialized ?? true,
-    };
+    if (!cloudReady) return;
+    const nextState = toPersistedDataState(snapshot.data() as Partial<PersistedDataState>);
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    lastCloudData = nextState;
     if (samePersistedData(getPersistedDataSnapshot(useData.getState()), nextState)) return;
     applyingRemoteData = true;
     useData.setState(nextState);

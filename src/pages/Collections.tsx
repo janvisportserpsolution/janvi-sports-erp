@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth, useData } from "../store";
 import {
   Wallet,
@@ -17,6 +17,7 @@ import {
 import { formatCurrency } from "../utils/id";
 
 export default function Collections() {
+  const navigate = useNavigate();
   const sessions = useData((s) => s.collectionSessions);
   const rows = useData((s) => s.collectionRows);
   const createCollectionSession = useData((s) => s.createCollectionSession);
@@ -231,7 +232,7 @@ export default function Collections() {
             });
             setNewOpen(false);
             if (r.ok && r.session_id) {
-              window.location.href = `/collections/${r.session_id}`;
+              navigate(`/collections/${r.session_id}`);
             } else {
               alert(r.message);
             }

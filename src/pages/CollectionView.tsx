@@ -22,6 +22,7 @@ export default function CollectionView() {
   const { id } = useParams();
   const allSessions = useData((s) => s.collectionSessions);
   const allRows = useData((s) => s.collectionRows);
+  const syncReady = useData((s) => s.syncReady);
   
   const session = useMemo(() => allSessions.find((cs) => cs.id === id), [allSessions, id]);
   const rowsAll = useMemo(() => allRows.filter((r) => r.session_id === id), [allRows, id]);
@@ -38,14 +39,6 @@ export default function CollectionView() {
   const [statusFilter, setStatusFilter] = useState<"ALL" | "PAID" | "PENDING" | "UNPAID">("ALL");
   const [addingName, setAddingName] = useState("");
   const tableRef = useRef<HTMLDivElement>(null);
-
-  if (!session) {
-    return (
-      <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
-        Session not found. <Link to="/collections" className="text-orange-700 underline">Back</Link>
-      </div>
-    );
-  }
 
   const rows = useMemo(() => {
     let r = [...rowsAll].sort((a, b) => a.serial - b.serial);
@@ -68,6 +61,22 @@ export default function CollectionView() {
     const pending = rowsAll.filter((r) => r.status === "PENDING" || r.status === "UNPAID").length;
     return { total, paid, pending, clients: rowsAll.length };
   }, [rowsAll]);
+
+  if (!session && !syncReady) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-600">
+        Loading collection session...
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
+        Session not found. <Link to="/collections" className="text-orange-700 underline">Back</Link>
+      </div>
+    );
+  }
 
   const quickAdd = (amt: number, rowId: string) => {
     if (session.status === "LOCKED") return;
