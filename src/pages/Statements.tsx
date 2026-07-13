@@ -3,7 +3,7 @@ import { useData } from "../store";
 import { useSearchParams } from "react-router-dom";
 import { formatCurrency, formatShortDate } from "../utils/id";
 import { CustomerLedgerEntry } from "../types";
-import { Mail, MessageSquare, Printer, Send, Search, Edit3 } from "lucide-react";
+import { Mail, MessageSquare, Printer, Send, Search, Edit3, Download } from "lucide-react";
 
 
 type StatementLedgerEntry = CustomerLedgerEntry & { running_balance: number };
@@ -256,6 +256,21 @@ export default function Statements() {
     return digits;
   };
 
+  const handleDownloadPdf = async () => {
+    if (!selectedCustomer) {
+      setStatus((prev) => ({ ...prev, print: "No customer selected" }));
+      return;
+    }
+
+    try {
+      const { pdfMake, docDefinition, fileName } = await buildDocDefinition();
+      pdfMake.createPdf(docDefinition).download(fileName);
+      setStatus((prev) => ({ ...prev, print: "PDF downloaded" }));
+    } catch (error: any) {
+      setStatus((prev) => ({ ...prev, print: `Failed ❌ ${error?.message || "PDF download failed"}` }));
+    }
+  };
+
   const handleSend = async () => {
     setSending(true);
     setStatus({});
@@ -293,14 +308,12 @@ export default function Statements() {
 
             const fromEmail = "Janvisports.customer.care@gmail.com";
 
-            // Browser limitation: mailto cannot include real file attachments.
-            // We open the user's email client with a link to the generated PDF blob.
             const subjectLine = encodeURIComponent(subject || `Ledger Statement – ${selectedCustomer.name} – ${periodLabel}`);
             const bodyText = encodeURIComponent(
               `${body || `Dear ${selectedCustomer.name},\n\nPlease find attached your ledger statement for ${periodLabel}.\n\nRegards,\nJANVI SPORTS`}\n\nPDF link: ${pdfUrl}\n\nFrom: ${fromEmail}`
             );
 
-            window.open(`mailto:${encodeURIComponent(contact.email)}?subject=${subjectLine}&body=${bodyText}`, "_blank");
+            window.open(`mailto:${encodeURIComponent(contact.email)}?cc=${encodeURIComponent(fromEmail)}&subject=${subjectLine}&body=${bodyText}`, "_blank");
 
             setStatus((prev) => ({ ...prev, email: "Email draft opened" }));
           } catch (error: any) {
@@ -324,8 +337,7 @@ export default function Statements() {
               `${body || `Dear ${selectedCustomer.name},\n\nPlease find your ledger statement for ${periodLabel}.\n\nRegards,\nJANVI SPORTS`}\n\nPDF link: ${pdfUrl}`
             );
 
-            // WhatsApp link (no real attachment possible via browser link)
-            window.open(`https://api.whatsapp.com/send/?phone=${phone}&text=${msg}`, "_blank");
+            window.open(`https://api.whatsapp.com/send/?phone=${phone}&text=${msg}&type=phone_number&app_absent=0`, "_blank");
             setStatus((prev) => ({ ...prev, whatsapp: "WhatsApp chat opened" }));
           } catch (error: any) {
             setStatus((prev) => ({ ...prev, whatsapp: `Failed ❌ ${error?.message || "WhatsApp send failed"}` }));
@@ -558,18 +570,27 @@ export default function Statements() {
                 </div>
 
                 <div className="rounded-3xl border border-slate-200 bg-white p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">Channel status</div>
                       <div className="text-xs text-slate-500">Email and WhatsApp are sent in parallel.</div>
                     </div>
-                    <button
-                      onClick={handleSend}
-                      disabled={!selectedCustomer || (!emailChecked && !whatsappChecked && !printChecked) || sending}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      <Send size={16} /> {sending ? "Sending..." : "Send Statement"}
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDownloadPdf}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                      >
+                        <Download size={16} /> Download PDF
+                      </button>
+                      <button
+                        onClick={handleSend}
+                        disabled={!selectedCustomer || (!emailChecked && !whatsappChecked && !printChecked) || sending}
+                        className="inline-flex items-center gap-2 rounded-2xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        <Send size={16} /> {sending ? "Sending..." : "Send Statement"}
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-2 text-sm">
                     {emailChecked && <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">Email: {status.email || "Ready to send"}</div>}

@@ -11,6 +11,7 @@ import {
   X,
   Pencil,
   Power,
+  Trash2,
 } from "lucide-react";
 import QrScanner from "../components/QrScanner";
 import { formatCurrency, formatDate } from "../utils/id";
@@ -231,6 +232,17 @@ export default function Inventory() {
                         >
                           <Pencil size={16} />
                         </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Delete ${p.name}?`)) {
+                              deleteProduct(p.id);
+                            }
+                          }}
+                          className="rounded-md p-1.5 text-rose-700 hover:bg-rose-50"
+                          title="Delete"
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -281,7 +293,7 @@ export default function Inventory() {
           onDelete={
             editing.id
               ? () => {
-                  if (confirm("Deactivate this product?")) {
+                  if (confirm("Delete this product permanently?")) {
                     deleteProduct(editing.id);
                     setEditing(null);
                   }
@@ -474,7 +486,7 @@ function ProductModal({ product, onClose, onSave, onDelete }: any) {
               onClick={onDelete}
               className="rounded-lg border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
             >
-              Deactivate
+              Delete Product
             </button>
           )}
         </div>

@@ -289,9 +289,7 @@ export const useData = create<DataState>()(
         })),
       deleteProduct: (id) =>
         set((s) => ({
-          products: s.products.map((p) =>
-            p.id === id ? { ...p, is_active: false, updated_at: nowISO() } : p
-          ),
+          products: s.products.filter((p) => p.id !== id),
         })),
 
       addStock: (productId, qty, note) => {

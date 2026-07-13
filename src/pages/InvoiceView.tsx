@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useData } from "../store";
-import { ArrowLeft, Printer, Mail } from "lucide-react";
+import { ArrowLeft, Printer, Mail, MessageSquare, Download } from "lucide-react";
 import { formatCurrency, formatDate } from "../utils/id";
 import { StatusBadge } from "./Dashboard";
 import jsPDF from "jspdf";
@@ -40,7 +40,14 @@ export default function InvoiceView() {
     );
   }
 
-  const exportPdf = () => {
+  const toE164WithoutPlus = (mobile: string) => {
+    const digits = mobile.replace(/\D/g, "");
+    if (digits.startsWith("91") && digits.length >= 12) return digits;
+    if (digits.length === 10) return `91${digits}`;
+    return digits;
+  };
+
+  const buildInvoicePdf = () => {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const w = doc.internal.pageSize.getWidth();
     let y = 40;
@@ -114,7 +121,45 @@ export default function InvoiceView() {
     doc.setFontSize(9).setFont("helvetica", "italic").setTextColor(148, 163, 184);
     doc.text("Thank you for your purchase!", w / 2, 780, { align: "center" });
 
-    doc.save(`${invoice.invoice_number}.pdf`);
+    return {
+      pdfBlob: doc.output("blob"),
+      fileName: `${invoice.invoice_number}.pdf`,
+    };
+  };
+
+  const handleDownloadPdf = () => {
+    const { pdfBlob, fileName } = buildInvoicePdf();
+    const url = URL.createObjectURL(pdfBlob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const handleEmailInvoice = () => {
+    const { pdfBlob, fileName } = buildInvoicePdf();
+    const pdfUrl = URL.createObjectURL(pdfBlob);
+    const toEmail = (customer?.email || "Janvisports.customer.care@gmail.com").trim();
+    const subject = encodeURIComponent(`Invoice ${invoice.invoice_number}`);
+    const body = encodeURIComponent(
+      `Hello ${customer?.name || "Customer"},\n\nPlease find your invoice PDF here:\n${pdfUrl}\n\nInvoice Number: ${invoice.invoice_number}\n\nRegards,\nJANVI SPORTS\n\nFrom: Janvisports.customer.care@gmail.com`
+    );
+    window.open(`mailto:${encodeURIComponent(toEmail)}?cc=${encodeURIComponent("Janvisports.customer.care@gmail.com")}&subject=${subject}&body=${body}`, "_blank");
+    setTimeout(() => URL.revokeObjectURL(pdfUrl), 0);
+  };
+
+  const handleWhatsappInvoice = () => {
+    const { pdfBlob } = buildInvoicePdf();
+    const pdfUrl = URL.createObjectURL(pdfBlob);
+    const phone = toE164WithoutPlus(customer?.mobile || "");
+    const message = encodeURIComponent(
+      `Hello ${customer?.name || "Customer"},\n\nPlease find your invoice PDF here:\n${pdfUrl}\n\nInvoice Number: ${invoice.invoice_number}\n\nRegards,\nJANVI SPORTS`
+    );
+    window.open(`https://api.whatsapp.com/send/?phone=${phone}&text=${message}&type=phone_number&app_absent=0`, "_blank");
+    setTimeout(() => URL.revokeObjectURL(pdfUrl), 0);
   };
 
   return (
@@ -123,7 +168,7 @@ export default function InvoiceView() {
         <Link to="/invoices" className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700 hover:text-slate-900">
           <ArrowLeft size={16} /> Back to invoices
         </Link>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => window.print()}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
@@ -131,10 +176,22 @@ export default function InvoiceView() {
             <Printer size={14} /> Print
           </button>
           <button
-            onClick={exportPdf}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-700"
+            onClick={handleDownloadPdf}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
-            <Mail size={14} /> Download PDF
+            <Download size={14} /> Download PDF
+          </button>
+          <button
+            onClick={handleEmailInvoice}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Mail size={14} /> Email
+          </button>
+          <button
+            onClick={handleWhatsappInvoice}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+          >
+            <MessageSquare size={14} /> WhatsApp
           </button>
         </div>
       </div>
