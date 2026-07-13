@@ -21,7 +21,6 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import type { User } from "./types";
-import { ALL_PERMISSIONS } from "./rbac";
 import { nowISO } from "./utils/id";
 
 const firebaseConfig = {
@@ -56,33 +55,16 @@ setPersistence(auth, browserLocalPersistence).catch(() => undefined);
 
 const normalizeEmail = (value?: string | null) => (value ?? "").trim().toLowerCase();
 
-const demoCredentials: Record<string, { password: string; name: string; mobile: string; role: User["role"] }> = {
-  "admin@janvisports.com": { password: "admin123", name: "Admin", mobile: "9999999999", role: "admin" },
-  "factory@janvisports.com": {
-    password: "factory123",
-    name: "Factory Staff",
-    mobile: "7777777777",
-    role: "factory_ground_staff",
-  },
-  "tour@janvisports.com": { password: "tour123", name: "Tour User", mobile: "6666666666", role: "tour_user" },
-};
-
-export const isDemoCredential = (email: string, password: string) => {
-  const demo = demoCredentials[normalizeEmail(email)];
-  return Boolean(demo && demo.password === password);
-};
-
 const profileFromFirebaseUser = (firebaseUser: FirebaseUser, password = ""): User => {
   const email = normalizeEmail(firebaseUser.email);
-  const demo = demoCredentials[email];
   return {
     id: firebaseUser.uid,
-    name: firebaseUser.displayName || demo?.name || email.split("@")[0] || "User",
+    name: firebaseUser.displayName || email.split("@")[0] || "User",
     email,
-    mobile: demo?.mobile ?? "",
+    mobile: "",
     password_hash: password,
-    role: demo?.role ?? "tour_user",
-    permissions: demo?.role === "admin" ? ALL_PERMISSIONS : [],
+    role: "tour_user",
+    permissions: [],
     is_active: true,
     created_at: nowISO(),
     updated_at: nowISO(),
@@ -108,18 +90,10 @@ export const ensureUserProfile = async (firebaseUser: FirebaseUser, password = "
   return profile;
 };
 
-export const signInOrBootstrapDemoUser = async (email: string, password: string) => {
+export const signInOrBootstrapUser = async (email: string, password: string) => {
   const normalizedEmail = normalizeEmail(email);
-  let firebaseUser: FirebaseUser;
-  try {
-    const result = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-    firebaseUser = result.user;
-  } catch (error) {
-    if (!isDemoCredential(normalizedEmail, password)) throw error;
-    const result = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
-    firebaseUser = result.user;
-  }
-  return ensureUserProfile(firebaseUser, password);
+  const result = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+  return ensureUserProfile(result.user, password);
 };
 
 export const createSecondaryAuthUser = async (email: string, password: string) => {

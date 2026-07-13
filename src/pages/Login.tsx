@@ -15,8 +15,8 @@ import {
 export default function Login() {
   const login = useAuth((s) => s.login);
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@janvisports.com");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -186,13 +186,6 @@ export default function Login() {
               <LogIn size={16} /> {isSubmitting ? "Signing in..." : "Sign In"}
             </button>
 
-            <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3 text-xs text-slate-600">
-              <div className="mb-1 flex items-center gap-1 font-bold text-slate-700">
-                <Sparkles size={11} className="text-orange-500" /> Demo credentials
-              </div>
-              <div>Email: <span className="font-mono font-bold text-slate-900">admin@janvisports.com</span></div>
-              <div>Password: <span className="font-mono font-bold text-slate-900">admin123</span></div>
-            </div>
           </form>
         </div>
       </div>

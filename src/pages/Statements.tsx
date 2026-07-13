@@ -5,6 +5,7 @@ import { formatCurrency, formatShortDate } from "../utils/id";
 import { CustomerLedgerEntry } from "../types";
 import { Mail, MessageSquare, Printer, Send, Search, Edit3 } from "lucide-react";
 
+
 type StatementLedgerEntry = CustomerLedgerEntry & { running_balance: number };
 
 const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
@@ -246,6 +247,15 @@ export default function Statements() {
     return { pdfMake, docDefinition, fileName: `Ledger_${customer.name.replace(/\s+/g, "_")}_${mode === "single" ? singleDate : fromDate}_${mode === "single" ? singleDate : toDate}.pdf` };
   };
 
+  const toE164WithoutPlus = (mobile: string) => {
+    const digits = mobile.replace(/\D/g, "");
+    // If user already entered country code (e.g., 91xxxxxxxxxx), keep as-is
+    if (digits.startsWith("91") && digits.length >= 12) return digits;
+    // Default India
+    if (digits.length === 10) return `91${digits}`;
+    return digits;
+  };
+
   const handleSend = async () => {
     setSending(true);
     setStatus({});
@@ -257,67 +267,92 @@ export default function Statements() {
     }
 
     const contact = {
-      mobile: mobileDraft,
-      email: emailDraft,
+      mobile: mobileDraft.trim(),
+      email: emailDraft.trim(),
     };
 
     if (updateMaster) {
       updateCustomer(selectedCustomer.id, { mobile: contact.mobile, email: contact.email });
     }
 
+    const { pdfMake, docDefinition, fileName } = await buildDocDefinition();
+
+    // Create PDF blob for download; we also try to attach via mailto/whatsapp links (browser limitations)
+    const pdfBlob: Blob = await new Promise((res) => {
+      pdfMake.createPdf(docDefinition).getBlob((b: Blob) => res(b));
+    });
+    const pdfUrl = URL.createObjectURL(pdfBlob);
+
     const tasks: Promise<void>[] = [];
 
     if (emailChecked) {
-      const emailTask = new Promise<void>(async (resolve, reject) => {
-        try {
-          if (!contact.email) throw new Error("Customer email is required for Email");
-          const { pdfMake, docDefinition } = await buildDocDefinition();
-          await new Promise<void>((res) => pdfMake.createPdf(docDefinition).getBlob(() => {
-            window.setTimeout(res, 900);
-          }));
-          setStatus((prev) => ({ ...prev, email: "Sent ✅" }));
-          resolve();
-        } catch (error: any) {
-          setStatus((prev) => ({ ...prev, email: `Failed ❌ ${error?.message || "Email send failed"}` }));
-          reject(error);
-        }
-      });
-      tasks.push(emailTask);
+      tasks.push(
+        (async () => {
+          try {
+            if (!contact.email) throw new Error("Customer email is required for Email");
+
+            const fromEmail = "Janvisports.customer.care@gmail.com";
+
+            // Browser limitation: mailto cannot include real file attachments.
+            // We open the user's email client with a link to the generated PDF blob.
+            const subjectLine = encodeURIComponent(subject || `Ledger Statement – ${selectedCustomer.name} – ${periodLabel}`);
+            const bodyText = encodeURIComponent(
+              `${body || `Dear ${selectedCustomer.name},\n\nPlease find attached your ledger statement for ${periodLabel}.\n\nRegards,\nJANVI SPORTS`}\n\nPDF link: ${pdfUrl}\n\nFrom: ${fromEmail}`
+            );
+
+            window.open(`mailto:${encodeURIComponent(contact.email)}?subject=${subjectLine}&body=${bodyText}`, "_blank");
+
+            setStatus((prev) => ({ ...prev, email: "Email draft opened" }));
+          } catch (error: any) {
+            setStatus((prev) => ({ ...prev, email: `Failed ❌ ${error?.message || "Email send failed"}` }));
+            throw error;
+          }
+        })()
+      );
     }
 
     if (whatsappChecked) {
-      const whatsappTask = new Promise<void>(async (resolve, reject) => {
-        try {
-          if (!contact.mobile) throw new Error("Customer mobile is required for WhatsApp");
-          await new Promise<void>((res) => window.setTimeout(res, 1200));
-          setStatus((prev) => ({ ...prev, whatsapp: "Sent ✅" }));
-          resolve();
-        } catch (error: any) {
-          setStatus((prev) => ({ ...prev, whatsapp: `Failed ❌ ${error?.message || "WhatsApp send failed"}` }));
-          reject(error);
-        }
-      });
-      tasks.push(whatsappTask);
+      tasks.push(
+        (async () => {
+          try {
+            if (!contact.mobile) throw new Error("Customer mobile is required for WhatsApp");
+
+            const phone = toE164WithoutPlus(contact.mobile);
+            if (!phone) throw new Error("Invalid customer mobile");
+
+            const msg = encodeURIComponent(
+              `${body || `Dear ${selectedCustomer.name},\n\nPlease find your ledger statement for ${periodLabel}.\n\nRegards,\nJANVI SPORTS`}\n\nPDF link: ${pdfUrl}`
+            );
+
+            // WhatsApp link (no real attachment possible via browser link)
+            window.open(`https://api.whatsapp.com/send/?phone=${phone}&text=${msg}`, "_blank");
+            setStatus((prev) => ({ ...prev, whatsapp: "WhatsApp chat opened" }));
+          } catch (error: any) {
+            setStatus((prev) => ({ ...prev, whatsapp: `Failed ❌ ${error?.message || "WhatsApp send failed"}` }));
+            throw error;
+          }
+        })()
+      );
     }
 
     if (printChecked) {
-      const printTask = new Promise<void>(async (resolve, reject) => {
-        try {
-          const { pdfMake, docDefinition } = await buildDocDefinition();
-          pdfMake.createPdf(docDefinition).print();
-          setStatus((prev) => ({ ...prev, print: "Print dialog opened" }));
-          resolve();
-        } catch (error: any) {
-          setStatus((prev) => ({ ...prev, print: `Failed ❌ ${error?.message || "Print failed"}` }));
-          reject(error);
-        }
-      });
-      tasks.push(printTask);
+      tasks.push(
+        (async () => {
+          try {
+            pdfMake.createPdf(docDefinition).print();
+            setStatus((prev) => ({ ...prev, print: "Print dialog opened" }));
+          } catch (error: any) {
+            setStatus((prev) => ({ ...prev, print: `Failed ❌ ${error?.message || "Print failed"}` }));
+            throw error;
+          }
+        })()
+      );
     }
 
     await Promise.allSettled(tasks);
     setSending(false);
   };
+
 
   const handlePreviewDefaults = () => {
     if (!selectedCustomer) return;
@@ -436,7 +471,7 @@ export default function Statements() {
                 onClick={handlePreviewDefaults}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
-                <Edit3 size={14} /> Reset preview text
+                <Edit3 size={14} /> Clear preview text
               </button>
             </div>
 

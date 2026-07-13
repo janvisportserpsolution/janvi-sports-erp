@@ -20,6 +20,14 @@ service cloud.firestore {
       allow read, write: if signedIn();
     }
 
+    match /cashCollectionSessions/{sessionId} {
+      allow read, write: if signedIn();
+    }
+
+    match /cashCollectionRows/{rowId} {
+      allow read, write: if signedIn();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

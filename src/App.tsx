@@ -53,15 +53,9 @@ function RequirePermission({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const seed = useData((s) => s.seed);
-  const initialized = useData((s) => s.initialized);
   useEffect(() => {
     initializeFirebaseBackend();
   }, []);
-
-  useEffect(() => {
-    if (!initialized) seed();
-  }, [initialized, seed]);
 
   return (
     <Routes>

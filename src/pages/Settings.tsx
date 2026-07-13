@@ -2,14 +2,13 @@ import { useMemo, useState } from "react";
 import { useData } from "../store";
 import { ALL_PERMISSIONS, ROLE_DEFINITIONS } from "../rbac";
 import type { PermissionKey, RoleName } from "../types";
-import { Database, Trash2, AlertTriangle, Building2, ShieldCheck, UserPlus, Trash2 as TrashIcon, KeyRound } from "lucide-react";
+import { Database, Building2, ShieldCheck, UserPlus, Trash2 as TrashIcon, KeyRound } from "lucide-react";
 
 export default function Settings() {
   const products = useData((s) => s.products);
   const customers = useData((s) => s.customers);
   const invoices = useData((s) => s.invoices);
   const returns = useData((s) => s.salesReturns);
-  const resetAll = useData((s) => s.resetAll);
   const users = useData((s) => s.users);
   const createUser = useData((s) => s.createUser);
   const updateUser = useData((s) => s.updateUser);
@@ -21,13 +20,6 @@ export default function Settings() {
   const [editingPermissions, setEditingPermissions] = useState<PermissionKey[]>([]);
 
   const roleOptions = useMemo(() => Object.entries(ROLE_DEFINITIONS), []);
-
-  const confirmReset = () => {
-    if (window.confirm("Reset ALL data? This will erase all invoices, customers and stock changes. Continue?")) {
-      resetAll();
-      window.alert("Data has been reset to demo state.");
-    }
-  };
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -237,26 +229,6 @@ export default function Settings() {
                 )}
               </div>
             ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-slate-200 bg-white p-6">
-        <div className="flex items-start gap-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
-            <AlertTriangle size={20} />
-          </div>
-          <div className="flex-1">
-            <h3 className="font-semibold text-slate-900">Reset Demo Data</h3>
-            <p className="mt-1 text-sm text-slate-600">
-              This will erase all invoices, sales returns, customer ledgers and stock transactions, then restore the demo seed data.
-            </p>
-            <button
-              onClick={confirmReset}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100"
-            >
-              <Trash2 size={14} /> Reset All Data
-            </button>
           </div>
         </div>
       </div>

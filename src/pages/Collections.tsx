@@ -20,6 +20,7 @@ export default function Collections() {
   const navigate = useNavigate();
   const sessions = useData((s) => s.collectionSessions);
   const rows = useData((s) => s.collectionRows);
+  const syncReady = useData((s) => s.syncReady);
   const createCollectionSession = useData((s) => s.createCollectionSession);
   const deleteCollectionSession = useData((s) => s.deleteCollectionSession);
   const user = useAuth((s) => s.user);
@@ -52,6 +53,14 @@ export default function Collections() {
     );
     return { open, locked, totalCollected, pending };
   }, [sessions, rows]);
+
+  if (!syncReady) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-600">
+        Loading daily collections...
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -279,15 +288,7 @@ function Mini({ label, value, tone }: any) {
 function NewCollectionModal({ onClose, onCreate }: any) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [names, setNames] = useState(
-    `Aarav Textiles
-Mehta Fabrics
-Royal Suiting
-Khan Cloth Depot
-Shree Ganesh Traders
-Patel Brothers
-`
-  );
+  const [names, setNames] = useState("");
 
   const parsed = names
     .split("\n")
@@ -340,10 +341,7 @@ Patel Brothers
               value={names}
               onChange={(e) => setNames(e.target.value)}
               rows={9}
-              placeholder="Aarav Textiles
-Mehta Fabrics
-Royal Suiting
-..."
+              placeholder="Enter client names, one per line"
               className="w-full resize-y rounded-2xl border border-[#2b2f3a] bg-[#0f1116] px-4 py-3 text-sm leading-6 text-[#EDE6D8] outline-none focus:border-[#C6A15B] focus:ring-2 focus:ring-[#C6A15B]/20"
               style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
             />

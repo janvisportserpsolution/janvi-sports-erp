@@ -15,17 +15,17 @@ import type {
   CollectionRow,
 } from "./types";
 import { nowISO, uid } from "./utils/id";
-import { ALL_PERMISSIONS } from "./rbac";
 import {
   appStateRef,
   createSecondaryAuthUser,
+  db,
   ensureUserProfile,
   logoutFirebase,
   onFirebaseAuthChanged,
-  signInOrBootstrapDemoUser,
+  signInOrBootstrapUser,
   userProfileRef,
 } from "./firebase";
-import { getDoc, onSnapshot, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, onSnapshot, setDoc, writeBatch } from "firebase/firestore";
 
 type AuthState = {
   user: User | null;
@@ -36,37 +36,8 @@ type AuthState = {
 
 const normalizeEmail = (value?: string | null) => (value ?? "").trim().toLowerCase();
 
-const createDemoUser = (email: string, password: string, role: User["role"]): User => ({
-  id: uid("user"),
-  name: role === "admin" ? "Admin" : role === "factory_ground_staff" ? "Factory Staff" : "Tour User",
-  email,
-  mobile: role === "admin" ? "9999999999" : role === "factory_ground_staff" ? "7777777777" : "6666666666",
-  password_hash: password,
-  role,
-  permissions: role === "admin" ? ALL_PERMISSIONS : [],
-  is_active: true,
-  created_at: nowISO(),
-  updated_at: nowISO(),
-});
-
-const getDemoUserByCredentials = (email: string, password: string): User | null => {
-  const normalizedEmail = normalizeEmail(email);
-  if (!normalizedEmail || !password) return null;
-  const demoUsers: Record<string, User> = {
-    "admin@janvisports.com": createDemoUser("admin@janvisports.com", "admin123", "admin"),
-    "factory@janvisports.com": createDemoUser("factory@janvisports.com", "factory123", "factory_ground_staff"),
-    "tour@janvisports.com": createDemoUser("tour@janvisports.com", "tour123", "tour_user"),
-  };
-  const demoUser = demoUsers[normalizedEmail];
-  if (demoUser?.password_hash === password) return demoUser;
-  return null;
-};
-
 const normalizeStoredUser = (user: User | null | undefined): User | null => {
   if (!user) return null;
-
-  const demoUser = getDemoUserByCredentials(user.email ?? "", user.password_hash ?? "");
-  if (demoUser) return demoUser;
 
   const matchedUser = useData.getState().users.find((candidate) => {
     const sameId = candidate.id === user.id;
@@ -87,15 +58,6 @@ const normalizeStoredUser = (user: User | null | undefined): User | null => {
     };
   }
 
-  if (normalizeEmail(user.email) === "admin@janvisports.com" && user.password_hash === "admin123") {
-    return {
-      ...user,
-      role: "admin",
-      permissions: ALL_PERMISSIONS,
-      is_active: true,
-    };
-  }
-
   return user;
 };
 
@@ -108,7 +70,7 @@ export const useAuth = create<AuthState>()(
         const normalizedEmail = normalizeEmail(email);
         if (!normalizedEmail || !password.trim()) return { ok: false, message: "Email and password are required" };
         try {
-          const user = await signInOrBootstrapDemoUser(normalizedEmail, password);
+          const user = await signInOrBootstrapUser(normalizedEmail, password);
           if (!user.is_active) {
             await logoutFirebase();
             set({ user: null });
@@ -154,6 +116,7 @@ type DataState = {
 
   initialized: boolean;
   syncReady: boolean;
+  cashCollectionsReady: boolean;
 
   // Customers
   addCustomer: (data: Omit<Customer, "id" | "created_at" | "updated_at" | "credit_balance"> & { credit_balance?: number }) => Customer;
@@ -210,86 +173,12 @@ type DataState = {
   deleteUser: (id: string) => { ok: boolean; message: string };
   setUserPermissions: (id: string, permissions: PermissionKey[]) => { ok: boolean; message: string };
 
-  // Seeding
-  seed: () => void;
-  resetAll: () => void;
 };
-
-const seedUsers = (): User[] => [
-  {
-    id: uid("user"),
-    name: "Admin",
-    email: "admin@janvisports.com",
-    mobile: "9999999999",
-    password_hash: "admin123",
-    role: "admin",
-    permissions: [],
-    is_active: true,
-    created_at: nowISO(),
-    updated_at: nowISO(),
-  },
-  {
-    id: uid("user"),
-    name: "Factory Staff",
-    email: "factory@janvisports.com",
-    mobile: "7777777777",
-    password_hash: "factory123",
-    role: "factory_ground_staff",
-    permissions: [],
-    is_active: true,
-    created_at: nowISO(),
-    updated_at: nowISO(),
-  },
-  {
-    id: uid("user"),
-    name: "Tour User",
-    email: "tour@janvisports.com",
-    mobile: "6666666666",
-    password_hash: "tour123",
-    role: "tour_user",
-    permissions: [],
-    is_active: true,
-    created_at: nowISO(),
-    updated_at: nowISO(),
-  },
-];
-
-const seedProducts = (): Product[] => {
-  const items: Omit<Product, "id" | "created_at" | "updated_at" | "qr_code" | "is_active">[] = [
-    { name: "Nike Air Zoom Running Shoes", sku: "NK-AZ-001", selling_price: 5499, cost_price: 3200, stock_quantity: 25, low_stock_threshold: 5, category: "Footwear" },
-    { name: "Adidas Cricket Bat - English Willow", sku: "AD-CB-101", selling_price: 8999, cost_price: 5200, stock_quantity: 12, low_stock_threshold: 3, category: "Cricket" },
-    { name: "SG Test Leather Ball (Red)", sku: "SG-TB-220", selling_price: 899, cost_price: 480, stock_quantity: 60, low_stock_threshold: 15, category: "Cricket" },
-    { name: "Yonex Mavis 350 Badminton Shuttle", sku: "YN-MS-350", selling_price: 1099, cost_price: 650, stock_quantity: 40, low_stock_threshold: 10, category: "Badminton" },
-    { name: "Cosco Volleyball - Size 5", sku: "CS-VB-005", selling_price: 1299, cost_price: 750, stock_quantity: 18, low_stock_threshold: 5, category: "Volleyball" },
-    { name: "Nivia Football - Storm", sku: "NV-FB-007", selling_price: 1499, cost_price: 850, stock_quantity: 22, low_stock_threshold: 5, category: "Football" },
-    { name: "Puma Training Jersey", sku: "PM-TJ-014", selling_price: 1799, cost_price: 900, stock_quantity: 35, low_stock_threshold: 8, category: "Apparel" },
-    { name: "Wilson Tennis Racket - Pro Staff", sku: "WL-TR-088", selling_price: 12500, cost_price: 7800, stock_quantity: 6, low_stock_threshold: 2, category: "Tennis" },
-    { name: "Reebok Gym Bag - 40L", sku: "RB-GB-040", selling_price: 1899, cost_price: 980, stock_quantity: 28, low_stock_threshold: 7, category: "Accessories" },
-    { name: "MRF Batting Gloves - Legend", sku: "MR-BG-021", selling_price: 2199, cost_price: 1200, stock_quantity: 15, low_stock_threshold: 4, category: "Cricket" },
-    { name: "Spalding Basketball - NBA", sku: "SP-BB-NBA", selling_price: 2499, cost_price: 1450, stock_quantity: 4, low_stock_threshold: 5, category: "Basketball" },
-    { name: "Decathlon Yoga Mat - 6mm", sku: "DC-YM-006", selling_price: 999, cost_price: 480, stock_quantity: 50, low_stock_threshold: 12, category: "Fitness" },
-  ];
-  return items.map((p) => ({
-    ...p,
-    id: uid("prd"),
-    qr_code: `JANVI-${p.sku}`,
-    is_active: true,
-    created_at: nowISO(),
-    updated_at: nowISO(),
-  }));
-};
-
-const seedCustomers = (): Customer[] => [
-  { id: uid("cus"), name: "Walk-in Customer", mobile: "0000000000", email: "", address: "Counter Sale", credit_balance: 0, created_at: nowISO(), updated_at: nowISO() },
-  { id: uid("cus"), name: "Rahul Sharma", mobile: "9876543210", email: "rahul.sharma@example.com", address: "12, MG Road, Mumbai", credit_balance: 0, created_at: nowISO(), updated_at: nowISO() },
-  { id: uid("cus"), name: "Priya Patel", mobile: "9123456780", email: "priya.patel@example.com", address: "Sector 21, Ahmedabad", credit_balance: 0, created_at: nowISO(), updated_at: nowISO() },
-  { id: uid("cus"), name: "Sports Academy - Pune", mobile: "9988776655", email: "puneacademy@example.com", address: "Karve Nagar, Pune", credit_balance: 0, created_at: nowISO(), updated_at: nowISO() },
-];
 
 export const useData = create<DataState>()(
   persist(
     (set, get) => ({
-      users: seedUsers(),
+      users: [],
       customers: [],
       products: [],
       inventoryTransactions: [],
@@ -300,8 +189,9 @@ export const useData = create<DataState>()(
       ledger: [],
       collectionSessions: [],
       collectionRows: [],
-      initialized: false,
+      initialized: true,
       syncReady: false,
+      cashCollectionsReady: false,
 
       createUser: async (input) => {
         const normalizedEmail = normalizeEmail(input.email);
@@ -357,33 +247,6 @@ export const useData = create<DataState>()(
           users: s.users.map((u) => (u.id === id ? { ...u, permissions, updated_at: nowISO() } : u)),
         }));
         return { ok: true, message: "Permissions updated successfully" };
-      },
-
-      seed: () => {
-        const state = get();
-        if (state.initialized) return;
-        set({
-          customers: seedCustomers(),
-          products: seedProducts(),
-          initialized: true,
-        });
-      },
-
-      resetAll: () => {
-        set({
-          users: seedUsers(),
-          customers: seedCustomers(),
-          products: seedProducts(),
-          inventoryTransactions: [],
-          invoices: [],
-          invoiceItems: [],
-          salesReturns: [],
-          salesReturnItems: [],
-          ledger: [],
-          collectionSessions: [],
-          collectionRows: [],
-          initialized: true,
-        });
       },
 
       addCustomer: (data) => {
@@ -800,6 +663,8 @@ export const useData = create<DataState>()(
           collectionSessions: [session, ...s.collectionSessions],
           collectionRows: [...rows, ...s.collectionRows],
         }));
+        saveCloudNow();
+        saveCashCollectionsNow();
         return { ok: true, session_id, message: `Created collection sheet with ${dedup.length} clients` };
       },
 
@@ -838,6 +703,8 @@ export const useData = create<DataState>()(
           });
           return { collectionRows: rows, collectionSessions: sessions };
         });
+        saveCloudNow();
+        saveCashCollectionsNow();
       },
 
       setCollectionRowPayment: (row_id, amount, status, due_date, notes) => {
@@ -879,6 +746,8 @@ export const useData = create<DataState>()(
           const sessions = s.collectionSessions.map(cs => cs.id === session_id ? { ...cs, total_clients: cs.total_clients + 1, pending_clients: cs.pending_clients + 1, updated_at: nowISO() } : cs);
           return { collectionRows: newRows, collectionSessions: sessions };
         });
+        saveCloudNow();
+        saveCashCollectionsNow();
       },
 
       deleteCollectionRow: (row_id) => {
@@ -887,6 +756,7 @@ export const useData = create<DataState>()(
         if (!row) return;
         const sess = state.collectionSessions.find(s => s.id === row.session_id);
         if (sess?.status === "LOCKED") return;
+        void deleteDoc(cashCollectionRowDoc(row_id));
         set((s) => {
           const newRows = s.collectionRows.filter(r => r.id !== row_id);
           const rowsAfter = newRows.filter(r => r.session_id === row.session_id);
@@ -901,6 +771,8 @@ export const useData = create<DataState>()(
             })
           };
         });
+        saveCloudNow();
+        saveCashCollectionsNow();
       },
 
       reorderCollectionRows: (session_id, row_ids) => {
@@ -912,6 +784,8 @@ export const useData = create<DataState>()(
           });
           return { collectionRows: rows };
         });
+        saveCloudNow();
+        saveCashCollectionsNow();
       },
 
       lockCollectionSession: (session_id) => {
@@ -922,6 +796,8 @@ export const useData = create<DataState>()(
         set((s) => ({
           collectionSessions: s.collectionSessions.map(cs => cs.id === session_id ? { ...cs, status: "LOCKED", locked_at: nowISO(), updated_at: nowISO() } : cs)
         }));
+        saveCloudNow();
+        saveCashCollectionsNow();
         return { ok: true, message: "Collection locked and saved" };
       },
 
@@ -929,13 +805,20 @@ export const useData = create<DataState>()(
         set((s) => ({
           collectionSessions: s.collectionSessions.map(cs => cs.id === session_id ? { ...cs, status: "OPEN", locked_at: undefined, updated_at: nowISO() } : cs)
         }));
+        saveCloudNow();
+        saveCashCollectionsNow();
       },
 
       deleteCollectionSession: (session_id) => {
+        const rowIds = get().collectionRows.filter((r) => r.session_id === session_id).map((r) => r.id);
+        void deleteDoc(cashCollectionSessionDoc(session_id));
+        deleteCashCollectionRows(rowIds);
         set((s) => ({
           collectionSessions: s.collectionSessions.filter(cs => cs.id !== session_id),
           collectionRows: s.collectionRows.filter(r => r.session_id !== session_id)
         }));
+        saveCloudNow();
+        saveCashCollectionsNow();
       },
 
       postCollectionToLedger: (session_id) => {
@@ -949,6 +832,8 @@ export const useData = create<DataState>()(
           const res = get().recordPayment(row.customer_id, row.amount_received, useAuth.getState().user?.id || "collection", `Daily Collection ${sess.session_number} – ${row.customer_name}`);
           if (res.ok) posted++;
         }
+        saveCloudNow();
+        saveCashCollectionsNow();
         return { ok: true, posted, message: `Posted ${posted} payments to ERP customer ledger` };
       },
 
@@ -1022,11 +907,21 @@ const getPersistedDataSnapshot = (state: DataState): PersistedDataState => ({
 const samePersistedData = (left: PersistedDataState, right: PersistedDataState) =>
   persistedDataKeys.every((key) => JSON.stringify(left[key]) === JSON.stringify(right[key]));
 
+const sameCashCollections = (
+  left: Pick<PersistedDataState, "collectionSessions" | "collectionRows">,
+  right: Pick<PersistedDataState, "collectionSessions" | "collectionRows">
+) =>
+  JSON.stringify(left.collectionSessions) === JSON.stringify(right.collectionSessions) &&
+  JSON.stringify(left.collectionRows) === JSON.stringify(right.collectionRows);
+
 let firebaseStarted = false;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let applyingRemoteData = false;
+let applyingRemoteCashCollection = false;
 let cloudReady = false;
 let lastCloudData: PersistedDataState | null = null;
+let cashSessionsReady = false;
+let cashRowsReady = false;
 
 const toPersistedDataState = (cloudState: Partial<PersistedDataState>): PersistedDataState => ({
   users: cloudState.users?.length ? cloudState.users : useData.getState().users,
@@ -1044,7 +939,7 @@ const toPersistedDataState = (cloudState: Partial<PersistedDataState>): Persiste
 });
 
 const queueCloudSave = (state: DataState) => {
-  if (!cloudReady || applyingRemoteData) return;
+  if (!cloudReady || applyingRemoteData || applyingRemoteCashCollection) return;
   const data = getPersistedDataSnapshot(state);
   if (lastCloudData && samePersistedData(data, lastCloudData)) return;
   if (saveTimer) clearTimeout(saveTimer);
@@ -1055,6 +950,62 @@ const queueCloudSave = (state: DataState) => {
       lastCloudData = latestData;
     });
   }, 100);
+};
+
+const saveCloudNow = () => {
+  if (!cloudReady || applyingRemoteData || applyingRemoteCashCollection) return;
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  const latestData = getPersistedDataSnapshot(useData.getState());
+  if (lastCloudData && samePersistedData(latestData, lastCloudData)) return;
+  void setDoc(appStateRef(), { ...latestData, updated_at: nowISO() }, { merge: true }).then(() => {
+    lastCloudData = latestData;
+  });
+};
+
+const cashCollectionSessionDoc = (id: string) => doc(db, "cashCollectionSessions", id);
+const cashCollectionRowDoc = (id: string) => doc(db, "cashCollectionRows", id);
+
+const applyRemoteCashCollectionState = (nextSessions?: CollectionSession[], nextRows?: CollectionRow[]) => {
+  const current = useData.getState();
+  const mergedSessions = nextSessions ?? current.collectionSessions;
+  const mergedRows = nextRows ?? current.collectionRows;
+  const nextState = {
+    collectionSessions: mergedSessions,
+    collectionRows: mergedRows,
+  };
+
+  if (sameCashCollections({ collectionSessions: current.collectionSessions, collectionRows: current.collectionRows }, nextState)) {
+    return;
+  }
+
+  applyingRemoteCashCollection = true;
+  useData.setState(nextState);
+  applyingRemoteCashCollection = false;
+};
+
+const markCashCollectionsReady = () => {
+  if (cashSessionsReady && cashRowsReady) {
+    useData.setState({ cashCollectionsReady: true });
+  }
+};
+
+const saveCashCollectionsNow = () => {
+  if (applyingRemoteCashCollection) return;
+  const { collectionSessions, collectionRows } = useData.getState();
+  void Promise.all([
+    ...collectionSessions.map((session) => setDoc(cashCollectionSessionDoc(session.id), session, { merge: true })),
+    ...collectionRows.map((row) => setDoc(cashCollectionRowDoc(row.id), row, { merge: true })),
+  ]);
+};
+
+const deleteCashCollectionRows = (rowIds: string[]) => {
+  if (rowIds.length === 0) return;
+  const batch = writeBatch(db);
+  rowIds.forEach((rowId) => batch.delete(cashCollectionRowDoc(rowId)));
+  void batch.commit();
 };
 
 export const initializeFirebaseBackend = () => {
@@ -1105,6 +1056,8 @@ export const initializeFirebaseBackend = () => {
     if (!snapshot.exists()) return;
     if (!cloudReady) return;
     const nextState = toPersistedDataState(snapshot.data() as Partial<PersistedDataState>);
+    if (snapshot.metadata.hasPendingWrites) return;
+    if (lastCloudData && samePersistedData(nextState, lastCloudData)) return;
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -1114,5 +1067,27 @@ export const initializeFirebaseBackend = () => {
     applyingRemoteData = true;
     useData.setState(nextState);
     applyingRemoteData = false;
+  });
+
+  onSnapshot(collection(db, "cashCollectionSessions"), (snapshot) => {
+    if (snapshot.metadata.hasPendingWrites) return;
+    cashSessionsReady = true;
+    markCashCollectionsReady();
+    const nextSessions = snapshot.docs.map((doc) => {
+      const data = doc.data() as CollectionSession;
+      return { ...data, id: doc.id };
+    });
+    applyRemoteCashCollectionState(nextSessions);
+  });
+
+  onSnapshot(collection(db, "cashCollectionRows"), (snapshot) => {
+    if (snapshot.metadata.hasPendingWrites) return;
+    cashRowsReady = true;
+    markCashCollectionsReady();
+    const nextRows = snapshot.docs.map((doc) => {
+      const data = doc.data() as CollectionRow;
+      return { ...data, id: doc.id };
+    });
+    applyRemoteCashCollectionState(undefined, nextRows);
   });
 };
