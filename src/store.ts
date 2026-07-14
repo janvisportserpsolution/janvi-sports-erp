@@ -113,6 +113,7 @@ type DataState = {
   // Daily Collection Pro
   collectionSessions: CollectionSession[];
   collectionRows: CollectionRow[];
+  cash_last_synced_at: string | null;
 
   initialized: boolean;
   syncReady: boolean;
@@ -189,6 +190,7 @@ export const useData = create<DataState>()(
       ledger: [],
       collectionSessions: [],
       collectionRows: [],
+      cash_last_synced_at: null,
       initialized: true,
       syncReady: false,
       cashCollectionsReady: false,
@@ -1022,6 +1024,7 @@ const attachCashCollectionListeners = () => {
     });
     console.debug("[janvi] cashCollectionSessions snapshot received", { count: nextSessions.length });
     applyRemoteCashCollectionState(nextSessions);
+    try { useData.setState({ cash_last_synced_at: nowISO() }); } catch {}
   }, (error) => {
     console.error("cashCollectionSessions snapshot error", error);
     cashSessionsReady = true;
@@ -1038,6 +1041,7 @@ const attachCashCollectionListeners = () => {
     });
     console.debug("[janvi] cashCollectionRows snapshot received", { count: nextRows.length });
     applyRemoteCashCollectionState(undefined, nextRows);
+    try { useData.setState({ cash_last_synced_at: nowISO() }); } catch {}
   }, (error) => {
     console.error("cashCollectionRows snapshot error", error);
     cashRowsReady = true;
