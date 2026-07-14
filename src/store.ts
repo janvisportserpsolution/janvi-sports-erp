@@ -649,8 +649,8 @@ export const useData = create<DataState>()(
             serial: idx + 1,
             customer_id: customer?.id,
             customer_name: name,
-            customer_mobile: customer?.mobile,
-            amount_expected: customer?.credit_balance || undefined,
+            customer_mobile: customer?.mobile ?? null,
+            amount_expected: customer?.credit_balance ?? null,
             amount_received: 0,
             status: "UNPAID",
             updated_at: nowISO(),
@@ -733,8 +733,8 @@ export const useData = create<DataState>()(
           serial: existing.length + 1,
           customer_id: customer?.id,
           customer_name,
-          customer_mobile: customer?.mobile,
-          amount_expected: customer?.credit_balance || undefined,
+          customer_mobile: customer?.mobile ?? null,
+          amount_expected: customer?.credit_balance ?? null,
           amount_received: 0,
           status: "UNPAID",
           updated_at: nowISO(),
@@ -1039,9 +1039,19 @@ const attachCashCollectionListeners = () => {
 const saveCashCollectionsNow = () => {
   if (applyingRemoteCashCollection) return;
   const { collectionSessions, collectionRows } = useData.getState();
+  // Firestore rejects `undefined` values — sanitize objects before writing.
+  const sanitize = (obj: Record<string, any>) => {
+    const out: Record<string, any> = {};
+    Object.keys(obj).forEach((k) => {
+      const v = obj[k];
+      out[k] = v === undefined ? null : v;
+    });
+    return out;
+  };
+
   void Promise.all([
-    ...collectionSessions.map((session) => setDoc(cashCollectionSessionDoc(session.id), session, { merge: true })),
-    ...collectionRows.map((row) => setDoc(cashCollectionRowDoc(row.id), row, { merge: true })),
+    ...collectionSessions.map((session) => setDoc(cashCollectionSessionDoc(session.id), sanitize(session as any), { merge: true })),
+    ...collectionRows.map((row) => setDoc(cashCollectionRowDoc(row.id), sanitize(row as any), { merge: true })),
   ]);
 };
 
