@@ -1007,7 +1007,10 @@ const markCashCollectionsReady = () => {
 const attachCashCollectionListeners = () => {
   if (cashListenersStarted) return;
   cashListenersStarted = true;
-  console.debug("[janvi] attachCashCollectionListeners: starting listeners");
+  console.debug("[janvi] attachCashCollectionListeners: starting listeners", {
+    user: useAuth.getState().user?.id,
+    cloudReady,
+  });
 
   onSnapshot(collection(db, "cashCollectionSessions"), (snapshot) => {
     if (snapshot.metadata.hasPendingWrites) return;
@@ -1066,9 +1069,18 @@ const saveCashCollectionsNow = () => {
         sessions: collectionSessions.length,
         rows: collectionRows.length,
       });
+      try {
+        localStorage.setItem(
+          "janvi:cash_last_saved_at",
+          JSON.stringify({ at: nowISO(), sessions: collectionSessions.length, rows: collectionRows.length })
+        );
+      } catch {}
     })
     .catch((err) => {
       console.error("[janvi] saveCashCollectionsNow failed", err);
+      try {
+        localStorage.setItem("janvi:cash_last_save_error", JSON.stringify({ at: nowISO(), message: (err && err.message) || err }));
+      } catch {}
     });
 };
 
