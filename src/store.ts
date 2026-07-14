@@ -1081,7 +1081,73 @@ const saveCashCollectionsNow = () => {
       try {
         localStorage.setItem("janvi:cash_last_save_error", JSON.stringify({ at: nowISO(), message: (err && err.message) || err }));
       } catch {}
+      // enqueue individual docs for later retry
+      try {
+        collectionSessions.forEach((session) => enqueuePendingWrite(`cashCollectionSessions/${session.id}`, sanitize(session as any)));
+        collectionRows.forEach((row) => enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any)));
+        scheduleFlushPendingWrites(2000);
+      } catch (e) {
+        console.error("[janvi] enqueue pending writes failed", e);
+      }
     });
+};
+
+// Pending write queue for cash collections (persisted to localStorage)
+const PENDING_KEY = "janvi:pending_cash_writes";
+let pendingCashWrites: Array<{ docPath: string; data: Record<string, any> }> = [];
+
+const loadPendingWrites = () => {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return [] as any[];
+    return JSON.parse(raw) as Array<{ docPath: string; data: Record<string, any> }>;
+  } catch {
+    return [] as any[];
+  }
+};
+
+const savePendingWritesToStorage = () => {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(pendingCashWrites));
+  } catch {}
+};
+
+pendingCashWrites = loadPendingWrites();
+
+const enqueuePendingWrite = (docPath: string, data: Record<string, any>) => {
+  pendingCashWrites.push({ docPath, data });
+  savePendingWritesToStorage();
+};
+
+let pendingFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const scheduleFlushPendingWrites = (delay = 3000) => {
+  if (pendingFlushTimer) clearTimeout(pendingFlushTimer);
+  pendingFlushTimer = setTimeout(() => void flushPendingCashWrites(), delay);
+};
+
+const flushPendingCashWrites = async () => {
+  if (!cloudReady || applyingRemoteCashCollection) return;
+  pendingCashWrites = loadPendingWrites();
+  if (!pendingCashWrites.length) return;
+  const toFlush = [...pendingCashWrites];
+  try {
+    await Promise.all(
+      toFlush.map((p) => {
+        // docPath like `cashCollectionRows/{id}` or `cashCollectionSessions/{id}`
+        const [col, id] = p.docPath.split("/");
+        if (col === "cashCollectionSessions") return setDoc(cashCollectionSessionDoc(id), sanitize(p.data as any), { merge: true });
+        return setDoc(cashCollectionRowDoc(id), sanitize(p.data as any), { merge: true });
+      })
+    );
+    // cleared on success
+    pendingCashWrites = [];
+    savePendingWritesToStorage();
+    console.debug("[janvi] flushPendingCashWrites: flushed pending writes", { count: toFlush.length });
+  } catch (err) {
+    console.error("[janvi] flushPendingCashWrites failed", err);
+    // retry later
+    scheduleFlushPendingWrites(5000);
+  }
 };
 
 
@@ -1130,11 +1196,18 @@ export const initializeFirebaseBackend = () => {
 
       cloudReady = true;
       useData.setState({ syncReady: true });
+      // Attempt to flush any pending cash writes when cloud becomes ready
+      try {
+        flushPendingCashWrites();
+      } catch {}
       useData.subscribe(queueCloudSave);
     })
     .catch(() => {
       cloudReady = true;
       useData.setState({ syncReady: true });
+      try {
+        flushPendingCashWrites();
+      } catch {}
     });
 
   onSnapshot(appStateRef(), (snapshot) => {
@@ -1157,5 +1230,9 @@ export const initializeFirebaseBackend = () => {
   });
 
   attachCashCollectionListeners();
+  // Retry pending writes when network returns
+  try {
+    window.addEventListener("online", () => void flushPendingCashWrites());
+  } catch {}
 };
 
