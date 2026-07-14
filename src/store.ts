@@ -969,9 +969,12 @@ const saveCloudNow = () => {
   }
   const latestData = getPersistedDataSnapshot(useData.getState());
   if (lastCloudData && samePersistedData(latestData, lastCloudData)) return;
-  void setDoc(appStateRef(), { ...latestData, updated_at: nowISO() }, { merge: true }).then(() => {
-    lastCloudData = latestData;
-  });
+  setDoc(appStateRef(), { ...latestData, updated_at: nowISO() }, { merge: true })
+    .then(() => {
+      lastCloudData = latestData;
+      console.debug("[janvi] saveCloudNow: wrote app state to Firestore");
+    })
+    .catch((err) => console.error("[janvi] saveCloudNow failed", err));
 };
 
 const cashCollectionSessionDoc = (id: string) => doc(db, "cashCollectionSessions", id);
@@ -1004,6 +1007,7 @@ const markCashCollectionsReady = () => {
 const attachCashCollectionListeners = () => {
   if (cashListenersStarted) return;
   cashListenersStarted = true;
+  console.debug("[janvi] attachCashCollectionListeners: starting listeners");
 
   onSnapshot(collection(db, "cashCollectionSessions"), (snapshot) => {
     if (snapshot.metadata.hasPendingWrites) return;
@@ -1013,6 +1017,7 @@ const attachCashCollectionListeners = () => {
       const data = doc.data() as CollectionSession;
       return { ...data, id: doc.id };
     });
+    console.debug("[janvi] cashCollectionSessions snapshot received", { count: nextSessions.length });
     applyRemoteCashCollectionState(nextSessions);
   }, (error) => {
     console.error("cashCollectionSessions snapshot error", error);
@@ -1028,6 +1033,7 @@ const attachCashCollectionListeners = () => {
       const data = doc.data() as CollectionRow;
       return { ...data, id: doc.id };
     });
+    console.debug("[janvi] cashCollectionRows snapshot received", { count: nextRows.length });
     applyRemoteCashCollectionState(undefined, nextRows);
   }, (error) => {
     console.error("cashCollectionRows snapshot error", error);
@@ -1049,10 +1055,21 @@ const saveCashCollectionsNow = () => {
     return out;
   };
 
-  void Promise.all([
+  const tasks = [
     ...collectionSessions.map((session) => setDoc(cashCollectionSessionDoc(session.id), sanitize(session as any), { merge: true })),
     ...collectionRows.map((row) => setDoc(cashCollectionRowDoc(row.id), sanitize(row as any), { merge: true })),
-  ]);
+  ];
+
+  Promise.all(tasks)
+    .then(() => {
+      console.debug("[janvi] saveCashCollectionsNow: wrote to Firestore", {
+        sessions: collectionSessions.length,
+        rows: collectionRows.length,
+      });
+    })
+    .catch((err) => {
+      console.error("[janvi] saveCashCollectionsNow failed", err);
+    });
 };
 
 
