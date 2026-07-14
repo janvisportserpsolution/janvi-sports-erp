@@ -23,6 +23,7 @@ import {
   logoutFirebase,
   onFirebaseAuthChanged,
   signInOrBootstrapUser,
+  uploadCashCollectionPDF,
   userProfileRef,
 } from "./firebase";
 import { collection, deleteDoc, doc, getDoc, onSnapshot, setDoc, writeBatch } from "firebase/firestore";
@@ -166,6 +167,7 @@ type DataState = {
   lockCollectionSession: (session_id: string) => { ok: boolean; message: string };
   unlockCollectionSession: (session_id: string) => void;
   deleteCollectionSession: (session_id: string) => void;
+  uploadCollectionSessionPDF: (session_id: string, pdfBlob: Blob) => Promise<{ ok: boolean; message: string; url?: string }>;
   postCollectionToLedger: (session_id: string) => { ok: boolean; posted: number; message: string };
 
   // Users / RBAC
@@ -941,6 +943,44 @@ export const useData = create<DataState>()(
         }
 
         saveCloudNow();
+      },
+
+      uploadCollectionSessionPDF: async (session_id, pdfBlob) => {
+        if (!canWriteCashCollection()) {
+          return { ok: false, message: "Sign in before saving PDFs to cloud" };
+        }
+        const state = get();
+        const session = state.collectionSessions.find((s) => s.id === session_id);
+        if (!session) return { ok: false, message: "Session not found" };
+
+        try {
+          const url = await uploadCashCollectionPDF(session_id, pdfBlob);
+          const updatedSession = {
+            ...session,
+            pdf_url: url,
+            pdf_stored_at: nowISO(),
+            updated_at: nowISO(),
+          };
+          set((s) => ({
+            collectionSessions: s.collectionSessions.map((cs) =>
+              cs.id === session_id ? updatedSession : cs
+            ),
+          }));
+          if (canWriteCashCollection()) {
+            await writeCashCollectionSession(updatedSession);
+          }
+          return { ok: true, message: "PDF saved to cloud.", url };
+        } catch (error) {
+          return {
+            ok: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : typeof error === "string"
+                ? error
+                : "Failed to upload the PDF",
+          };
+        }
       },
 
       postCollectionToLedger: (session_id) => {

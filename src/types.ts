@@ -176,6 +176,8 @@ export type CollectionSession = {
   pending_amount: number;
   status: CollectionStatus;
   locked_at?: string;
+  pdf_url?: string;
+  pdf_stored_at?: string;
   created_by: string;
   created_at: string;
   updated_at: string;

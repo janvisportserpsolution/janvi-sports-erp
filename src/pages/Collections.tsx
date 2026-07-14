@@ -245,6 +245,11 @@ export default function Collections() {
                     />
                   </div>
                   <div className="mt-1 text-[11px] text-slate-500">{paidPct}% collected</div>
+                  {s.pdf_url && (
+                    <div className="mt-2 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                      PDF stored
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4 flex items-center gap-2">

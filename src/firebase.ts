@@ -20,6 +20,12 @@ import {
   type Firestore,
   type Unsubscribe,
 } from "firebase/firestore";
+import {
+  getStorage,
+  ref,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
 import type { User } from "./types";
 import { nowISO } from "./utils/id";
 
@@ -35,6 +41,7 @@ const firebaseConfig = {
 
 export const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const db: Firestore = getFirestore(app);
+export const storage = getStorage(app);
 
 let analyticsPromise: Promise<Analytics | null> | null = null;
 
@@ -73,6 +80,13 @@ const profileFromFirebaseUser = (firebaseUser: FirebaseUser, password = ""): Use
 
 export const userProfileRef = (uid: string) => doc(db, "users", uid);
 export const appStateRef = () => doc(db, "erp", "janvi-sports-state");
+export const cashCollectionPDFRef = (session_id: string) => ref(storage, `cashCollectionPDFs/${session_id}.pdf`);
+
+export const uploadCashCollectionPDF = async (session_id: string, pdfBlob: Blob) => {
+  const pdfRef = cashCollectionPDFRef(session_id);
+  const result = await uploadBytes(pdfRef, pdfBlob, { contentType: "application/pdf" });
+  return getDownloadURL(result.ref);
+};
 
 export const ensureUserProfile = async (firebaseUser: FirebaseUser, password = "") => {
   const ref = userProfileRef(firebaseUser.uid);

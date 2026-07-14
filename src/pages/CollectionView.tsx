@@ -43,6 +43,7 @@ export default function CollectionView() {
   const deleteRow = useData((s) => s.deleteCollectionRow);
   const addRow = useData((s) => s.addCollectionRow);
   const postToLedger = useData((s) => s.postCollectionToLedger);
+  const uploadPDF = useData((s) => s.uploadCollectionSessionPDF);
 
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "PAID" | "PENDING" | "UNPAID">("ALL");
@@ -53,6 +54,7 @@ export default function CollectionView() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [postFailed, setPostFailed] = useState(false);
+  const [savingPDF, setSavingPDF] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const closeTimerRef = useRef<number | null>(null);
 
@@ -210,12 +212,11 @@ export default function CollectionView() {
     }
   };
 
-  const exportPDF = () => {
+  const generatePDFBlob = (): Blob => {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
     const w = doc.internal.pageSize.getWidth();
     let y = 44;
 
-    // header - dark luxury style in PDF uses gold accent
     doc.setFillColor(9, 10, 13);
     doc.rect(0, 0, w, 86, "F");
     doc.setTextColor(234, 211, 154);
@@ -231,7 +232,6 @@ export default function CollectionView() {
     doc.text(`Total: ₹ ${totals.total.toLocaleString("en-IN")}`, w - 40, 58, { align: "right" });
 
     y = 106;
-    // table header
     doc.setFillColor(245, 242, 236);
     doc.rect(40, y, w - 80, 20, "F");
     doc.setTextColor(70, 70, 70);
@@ -281,7 +281,37 @@ export default function CollectionView() {
       align: "center",
     });
 
-    doc.save(`${session.session_number}.pdf`);
+    return doc.output("blob");
+  };
+
+  const exportPDF = () => {
+    const blob = generatePDFBlob();
+    const fileName = `${session.session_number}.pdf`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const savePDFToCloud = async () => {
+    setSavingPDF(true);
+    try {
+      const blob = generatePDFBlob();
+      const result = await uploadPDF(session.id, blob);
+      if (result.ok) {
+        pushToast({ type: "success", title: "PDF saved", message: "Daily Collection PDF is stored in the cloud." });
+      } else {
+        pushToast({ type: "error", title: "PDF save failed", message: result.message });
+      }
+    } catch (error: any) {
+      pushToast({ type: "error", title: "PDF save failed", message: error?.message || "Unable to store the PDF." });
+    } finally {
+      setSavingPDF(false);
+    }
   };
 
   return (
@@ -316,6 +346,11 @@ export default function CollectionView() {
                   {session.status}
                 </span>
               </div>
+              {session.pdf_url && (
+                <div className="mt-2 text-xs text-[#CBB893]">
+                  PDF stored: {new Date(session.pdf_stored_at || "").toLocaleString()}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -326,6 +361,24 @@ export default function CollectionView() {
             >
               <Download size={13} /> Download PDF
             </button>
+            <button
+              type="button"
+              onClick={savePDFToCloud}
+              disabled={savingPDF}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-[#2b2f3a] bg-[#121419] px-3 py-2 text-xs font-bold text-[#EAD39A] hover:bg-[#181c26] disabled:opacity-60"
+            >
+              {savingPDF ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save PDF
+            </button>
+            {session.pdf_url && (
+              <a
+                href={session.pdf_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[#2b2f3a] bg-[#121419] px-3 py-2 text-xs font-bold text-[#EAD39A] hover:bg-[#181c26]"
+              >
+                <Eye size={13} /> View Stored PDF
+              </a>
+            )}
             {session.status === "OPEN" ? (
               <button
                 type="button"
