@@ -641,10 +641,7 @@ export const useData = create<DataState>()(
         };
 
         const rows: CollectionRow[] = dedup.map((name, idx) => {
-          // Try to link to existing ERP customer
-          const customer = state.customers.find(
-            (c) => c.name.toLowerCase() === name.toLowerCase()
-          );
+          const customer = state.customers.find((c) => c.name.toLowerCase() === name.toLowerCase());
           return {
             id: uid("dcr"),
             session_id,
@@ -663,8 +660,29 @@ export const useData = create<DataState>()(
           collectionSessions: [session, ...s.collectionSessions],
           collectionRows: [...rows, ...s.collectionRows],
         }));
+
+        if (canWriteCashCollection()) {
+          void Promise.all([writeCashCollectionSession(session), ...rows.map(writeCashCollectionRow)]).catch((err) => {
+            console.error("[janvi] createCollectionSession initial cloud write failed", err);
+            try {
+              enqueuePendingWrite(`cashCollectionSessions/${session.id}`, sanitize(session as any));
+              rows.forEach((row) => enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any)));
+              scheduleFlushPendingWrites(2000);
+            } catch (enqueueError) {
+              console.error("[janvi] enqueue pending createCollectionSession failed", enqueueError);
+            }
+          });
+        } else {
+          try {
+            enqueuePendingWrite(`cashCollectionSessions/${session.id}`, sanitize(session as any));
+            rows.forEach((row) => enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any)));
+            scheduleFlushPendingWrites(2000);
+          } catch (enqueueError) {
+            console.error("[janvi] enqueue pending createCollectionSession failed", enqueueError);
+          }
+        }
+
         saveCloudNow();
-        saveCashCollectionsNow();
         return { ok: true, session_id, message: `Created collection sheet with ${dedup.length} clients` };
       },
 
@@ -673,25 +691,18 @@ export const useData = create<DataState>()(
           const rows = s.collectionRows.map((r) =>
             r.id === row_id ? { ...r, ...patch, updated_at: nowISO() } : r
           );
-          // Recalc session totals only for affected session
-          const updatedRow = rows.find(r => r.id === row_id);
+          const updatedRow = rows.find((r) => r.id === row_id);
           const affectedSessionId = updatedRow?.session_id;
-          
           const sessions = s.collectionSessions.map((sess) => {
-            if (sess.id !== affectedSessionId) return sess; // Don't update unaffected sessions
-            
+            if (sess.id !== affectedSessionId) return sess;
             const sessRows = rows.filter((r) => r.session_id === sess.id);
             if (sessRows.length === 0) return sess;
-            
             const paid_clients = sessRows.filter((r) => r.status === "PAID").length;
             const pending_clients = sessRows.filter((r) => r.status === "PENDING" || r.status === "UNPAID").length;
             const total_collected = sessRows.reduce((sum, r) => sum + (r.amount_received || 0), 0);
-            
-            // Only update if values changed
             if (sess.paid_clients === paid_clients && sess.pending_clients === pending_clients && sess.total_collected === total_collected && sess.total_clients === sessRows.length) {
               return sess;
             }
-            
             return {
               ...sess,
               total_clients: sessRows.length,
@@ -703,8 +714,21 @@ export const useData = create<DataState>()(
           });
           return { collectionRows: rows, collectionSessions: sessions };
         });
+
+        const updatedRow = get().collectionRows.find((r) => r.id === row_id);
+        const affectedSession = updatedRow ? get().collectionSessions.find((s) => s.id === updatedRow.session_id) : undefined;
+        if (updatedRow) void writeCashCollectionRow(updatedRow).catch((err) => {
+          console.error("[janvi] updateCollectionRow failed", err);
+          enqueuePendingWrite(`cashCollectionRows/${updatedRow.id}`, sanitize(updatedRow as any));
+          scheduleFlushPendingWrites(2000);
+        });
+        if (affectedSession) void writeCashCollectionSession(affectedSession).catch((err) => {
+          console.error("[janvi] updateCollectionRow session update failed", err);
+          enqueuePendingWrite(`cashCollectionSessions/${affectedSession.id}`, sanitize(affectedSession as any));
+          scheduleFlushPendingWrites(2000);
+        });
+
         saveCloudNow();
-        saveCashCollectionsNow();
       },
 
       setCollectionRowPayment: (row_id, amount, status, due_date, notes) => {
@@ -746,8 +770,26 @@ export const useData = create<DataState>()(
           const sessions = s.collectionSessions.map(cs => cs.id === session_id ? { ...cs, total_clients: cs.total_clients + 1, pending_clients: cs.pending_clients + 1, updated_at: nowISO() } : cs);
           return { collectionRows: newRows, collectionSessions: sessions };
         });
+
+        if (canWriteCashCollection()) {
+          const updatedSession = get().collectionSessions.find((s) => s.id === session_id);
+          if (updatedSession) void writeCashCollectionSession(updatedSession).catch((err) => {
+            console.error("[janvi] addCollectionRow session update failed", err);
+            enqueuePendingWrite(`cashCollectionSessions/${updatedSession.id}`, sanitize(updatedSession as any));
+            scheduleFlushPendingWrites(2000);
+          });
+          void writeCashCollectionRow(row).catch((err) => {
+            console.error("[janvi] addCollectionRow failed", err);
+            enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any));
+            scheduleFlushPendingWrites(2000);
+          });
+        } else {
+          enqueuePendingWrite(`cashCollectionSessions/${session_id}`, sanitize(get().collectionSessions.find((s) => s.id === session_id) as any));
+          enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any));
+          scheduleFlushPendingWrites(2000);
+        }
+
         saveCloudNow();
-        saveCashCollectionsNow();
       },
 
       deleteCollectionRow: (row_id) => {
@@ -756,7 +798,6 @@ export const useData = create<DataState>()(
         if (!row) return;
         const sess = state.collectionSessions.find(s => s.id === row.session_id);
         if (sess?.status === "LOCKED") return;
-        void deleteDoc(cashCollectionRowDoc(row_id));
         set((s) => {
           const newRows = s.collectionRows.filter(r => r.id !== row_id);
           const rowsAfter = newRows.filter(r => r.session_id === row.session_id);
@@ -771,8 +812,33 @@ export const useData = create<DataState>()(
             })
           };
         });
+
+        if (canWriteCashCollection()) {
+          void deleteCashCollectionRow(row_id).catch((err) => {
+            console.error("[janvi] deleteCollectionRow failed", err);
+            enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any));
+            scheduleFlushPendingWrites(2000);
+          });
+        } else {
+          enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any));
+          scheduleFlushPendingWrites(2000);
+        }
+
+        const updatedSession = get().collectionSessions.find((s) => s.id === row.session_id);
+        if (updatedSession) {
+          if (canWriteCashCollection()) {
+            void writeCashCollectionSession(updatedSession).catch((err) => {
+              console.error("[janvi] deleteCollectionRow session update failed", err);
+              enqueuePendingWrite(`cashCollectionSessions/${updatedSession.id}`, sanitize(updatedSession as any));
+              scheduleFlushPendingWrites(2000);
+            });
+          } else {
+            enqueuePendingWrite(`cashCollectionSessions/${updatedSession.id}`, sanitize(updatedSession as any));
+            scheduleFlushPendingWrites(2000);
+          }
+        }
+
         saveCloudNow();
-        saveCashCollectionsNow();
       },
 
       reorderCollectionRows: (session_id, row_ids) => {
@@ -784,8 +850,21 @@ export const useData = create<DataState>()(
           });
           return { collectionRows: rows };
         });
+
+        const rows = get().collectionRows.filter((r) => r.session_id === session_id);
+        rows.forEach((row) => {
+          if (canWriteCashCollection()) {
+            void writeCashCollectionRow(row).catch((err) => {
+              console.error("[janvi] reorderCollectionRows failed", err);
+              enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any));
+              scheduleFlushPendingWrites(2000);
+            });
+          } else {
+            enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any));
+          }
+        });
+
         saveCloudNow();
-        saveCashCollectionsNow();
       },
 
       lockCollectionSession: (session_id) => {
@@ -793,32 +872,75 @@ export const useData = create<DataState>()(
         const sess = state.collectionSessions.find(s => s.id === session_id);
         if (!sess) return { ok: false, message: "Session not found" };
         if (sess.status === "LOCKED") return { ok: false, message: "Already locked" };
+        const updatedSession = { ...sess, status: "LOCKED", locked_at: nowISO(), updated_at: nowISO() };
         set((s) => ({
-          collectionSessions: s.collectionSessions.map(cs => cs.id === session_id ? { ...cs, status: "LOCKED", locked_at: nowISO(), updated_at: nowISO() } : cs)
+          collectionSessions: s.collectionSessions.map(cs => cs.id === session_id ? updatedSession : cs)
         }));
+
+        if (canWriteCashCollection()) {
+          void writeCashCollectionSession(updatedSession).catch((err) => {
+            console.error("[janvi] lockCollectionSession failed", err);
+            enqueuePendingWrite(`cashCollectionSessions/${updatedSession.id}`, sanitize(updatedSession as any));
+            scheduleFlushPendingWrites(2000);
+          });
+        } else {
+          enqueuePendingWrite(`cashCollectionSessions/${updatedSession.id}`, sanitize(updatedSession as any));
+          scheduleFlushPendingWrites(2000);
+        }
+
         saveCloudNow();
-        saveCashCollectionsNow();
         return { ok: true, message: "Collection locked and saved" };
       },
 
       unlockCollectionSession: (session_id) => {
+        const session = get().collectionSessions.find((cs) => cs.id === session_id);
+        if (!session) return;
+        const updatedSession = { ...session, status: "OPEN", locked_at: undefined, updated_at: nowISO() };
         set((s) => ({
-          collectionSessions: s.collectionSessions.map(cs => cs.id === session_id ? { ...cs, status: "OPEN", locked_at: undefined, updated_at: nowISO() } : cs)
+          collectionSessions: s.collectionSessions.map(cs => cs.id === session_id ? updatedSession : cs)
         }));
+
+        if (canWriteCashCollection()) {
+          void writeCashCollectionSession(updatedSession).catch((err) => {
+            console.error("[janvi] unlockCollectionSession failed", err);
+            enqueuePendingWrite(`cashCollectionSessions/${updatedSession.id}`, sanitize(updatedSession as any));
+            scheduleFlushPendingWrites(2000);
+          });
+        } else {
+          enqueuePendingWrite(`cashCollectionSessions/${updatedSession.id}`, sanitize(updatedSession as any));
+          scheduleFlushPendingWrites(2000);
+        }
+
         saveCloudNow();
-        saveCashCollectionsNow();
       },
 
       deleteCollectionSession: (session_id) => {
         const rowIds = get().collectionRows.filter((r) => r.session_id === session_id).map((r) => r.id);
-        void deleteDoc(cashCollectionSessionDoc(session_id));
-        deleteCashCollectionRows(rowIds);
         set((s) => ({
           collectionSessions: s.collectionSessions.filter(cs => cs.id !== session_id),
           collectionRows: s.collectionRows.filter(r => r.session_id !== session_id)
         }));
+
+        if (canWriteCashCollection()) {
+          void deleteCashCollectionSession(session_id).catch((err) => {
+            console.error("[janvi] deleteCollectionSession failed", err);
+            enqueuePendingWrite(`cashCollectionSessions/${session_id}`, sanitize({ id: session_id } as any));
+            scheduleFlushPendingWrites(2000);
+          });
+          rowIds.forEach((rowId) => {
+            void deleteCashCollectionRow(rowId).catch((err) => {
+              console.error("[janvi] deleteCollectionSession row delete failed", err);
+              enqueuePendingWrite(`cashCollectionRows/${rowId}`, sanitize({ id: rowId } as any));
+              scheduleFlushPendingWrites(2000);
+            });
+          });
+        } else {
+          enqueuePendingWrite(`cashCollectionSessions/${session_id}`, sanitize({ id: session_id } as any));
+          rowIds.forEach((rowId) => enqueuePendingWrite(`cashCollectionRows/${rowId}`, sanitize({ id: rowId } as any)));
+          scheduleFlushPendingWrites(2000);
+        }
+
         saveCloudNow();
-        saveCashCollectionsNow();
       },
 
       postCollectionToLedger: (session_id) => {
@@ -982,6 +1104,39 @@ const saveCloudNow = () => {
 const cashCollectionSessionDoc = (id: string) => doc(db, "cashCollectionSessions", id);
 const cashCollectionRowDoc = (id: string) => doc(db, "cashCollectionRows", id);
 
+const sanitize = (obj: Record<string, any>) => {
+  const out: Record<string, any> = {};
+  Object.keys(obj).forEach((k) => {
+    const v = obj[k];
+    out[k] = v === undefined ? null : v;
+  });
+  return out;
+};
+
+const canWriteCashCollection = () => {
+  return !!useAuth.getState().user;
+};
+
+const writeCashCollectionSession = async (session: CollectionSession) => {
+  if (!canWriteCashCollection()) return;
+  return setDoc(cashCollectionSessionDoc(session.id), sanitize(session as any), { merge: true });
+};
+
+const writeCashCollectionRow = async (row: CollectionRow) => {
+  if (!canWriteCashCollection()) return;
+  return setDoc(cashCollectionRowDoc(row.id), sanitize(row as any), { merge: true });
+};
+
+const deleteCashCollectionSession = async (session_id: string) => {
+  if (!canWriteCashCollection()) return;
+  return deleteDoc(cashCollectionSessionDoc(session_id));
+};
+
+const deleteCashCollectionRow = async (row_id: string) => {
+  if (!canWriteCashCollection()) return;
+  return deleteDoc(cashCollectionRowDoc(row_id));
+};
+
 const applyRemoteCashCollectionState = (nextSessions?: CollectionSession[], nextRows?: CollectionRow[]) => {
   const current = useData.getState();
   const mergedSessions = nextSessions ?? current.collectionSessions;
@@ -1052,19 +1207,20 @@ const attachCashCollectionListeners = () => {
 const saveCashCollectionsNow = () => {
   if (applyingRemoteCashCollection) return;
   const { collectionSessions, collectionRows } = useData.getState();
-  // Firestore rejects `undefined` values — sanitize objects before writing.
-  const sanitize = (obj: Record<string, any>) => {
-    const out: Record<string, any> = {};
-    Object.keys(obj).forEach((k) => {
-      const v = obj[k];
-      out[k] = v === undefined ? null : v;
-    });
-    return out;
-  };
+  if (!canWriteCashCollection()) {
+    try {
+      collectionSessions.forEach((session) => enqueuePendingWrite(`cashCollectionSessions/${session.id}`, sanitize(session as any)));
+      collectionRows.forEach((row) => enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any)));
+      scheduleFlushPendingWrites(2000);
+    } catch (e) {
+      console.error("[janvi] saveCashCollectionsNow enqueue failed", e);
+    }
+    return;
+  }
 
   const tasks = [
-    ...collectionSessions.map((session) => setDoc(cashCollectionSessionDoc(session.id), sanitize(session as any), { merge: true })),
-    ...collectionRows.map((row) => setDoc(cashCollectionRowDoc(row.id), sanitize(row as any), { merge: true })),
+    ...collectionSessions.map((session) => writeCashCollectionSession(session)),
+    ...collectionRows.map((row) => writeCashCollectionRow(row)),
   ];
 
   Promise.all(tasks)
@@ -1085,7 +1241,6 @@ const saveCashCollectionsNow = () => {
       try {
         localStorage.setItem("janvi:cash_last_save_error", JSON.stringify({ at: nowISO(), message: (err && err.message) || err }));
       } catch {}
-      // enqueue individual docs for later retry
       try {
         collectionSessions.forEach((session) => enqueuePendingWrite(`cashCollectionSessions/${session.id}`, sanitize(session as any)));
         collectionRows.forEach((row) => enqueuePendingWrite(`cashCollectionRows/${row.id}`, sanitize(row as any)));
@@ -1131,25 +1286,23 @@ const scheduleFlushPendingWrites = (delay = 3000) => {
 
 const flushPendingCashWrites = async () => {
   if (!cloudReady || applyingRemoteCashCollection) return;
+  if (!canWriteCashCollection()) return;
   pendingCashWrites = loadPendingWrites();
   if (!pendingCashWrites.length) return;
   const toFlush = [...pendingCashWrites];
   try {
     await Promise.all(
       toFlush.map((p) => {
-        // docPath like `cashCollectionRows/{id}` or `cashCollectionSessions/{id}`
         const [col, id] = p.docPath.split("/");
         if (col === "cashCollectionSessions") return setDoc(cashCollectionSessionDoc(id), sanitize(p.data as any), { merge: true });
         return setDoc(cashCollectionRowDoc(id), sanitize(p.data as any), { merge: true });
       })
     );
-    // cleared on success
     pendingCashWrites = [];
     savePendingWritesToStorage();
     console.debug("[janvi] flushPendingCashWrites: flushed pending writes", { count: toFlush.length });
   } catch (err) {
     console.error("[janvi] flushPendingCashWrites failed", err);
-    // retry later
     scheduleFlushPendingWrites(5000);
   }
 };
