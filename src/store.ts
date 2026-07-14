@@ -820,19 +820,38 @@ export const useData = create<DataState>()(
       },
 
       postCollectionToLedger: (session_id) => {
-        const state = get();
-        const sess = state.collectionSessions.find(s => s.id === session_id);
-        if (!sess) return { ok: false, posted: 0, message: "Session not found" };
-        const rows = state.collectionRows.filter(r => r.session_id === session_id && r.status === "PAID" && r.amount_received > 0 && r.customer_id);
-        let posted = 0;
-        for (const row of rows) {
-          if (!row.customer_id) continue;
-          const res = get().recordPayment(row.customer_id, row.amount_received, useAuth.getState().user?.id || "collection", `Daily Collection ${sess.session_number} – ${row.customer_name}`);
-          if (res.ok) posted++;
+        try {
+          const state = get();
+          const sess = state.collectionSessions.find(s => s.id === session_id);
+          if (!sess) return { ok: false, posted: 0, message: "Session not found" };
+          const rows = state.collectionRows.filter(
+            (r) => r.session_id === session_id && r.status === "PAID" && r.amount_received > 0 && r.customer_id
+          );
+          let posted = 0;
+          for (const row of rows) {
+            if (!row.customer_id) continue;
+            const res = get().recordPayment(
+              row.customer_id,
+              row.amount_received,
+              useAuth.getState().user?.id || "collection",
+              `Daily Collection ${sess.session_number} – ${row.customer_name}`
+            );
+            if (res.ok) {
+              posted++;
+            }
+          }
+          saveCloudNow();
+          saveCashCollectionsNow();
+          return { ok: true, posted, message: `Posted ${posted} payments to ERP customer ledger` };
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : typeof error === "string"
+              ? error
+              : "Failed while posting to ERP ledger";
+          return { ok: false, posted: 0, message };
         }
-        saveCloudNow();
-        saveCashCollectionsNow();
-        return { ok: true, posted, message: `Posted ${posted} payments to ERP customer ledger` };
       },
 
     }),
@@ -848,8 +867,6 @@ export const useData = create<DataState>()(
         salesReturns: s.salesReturns,
         salesReturnItems: s.salesReturnItems,
         ledger: s.ledger,
-        collectionSessions: s.collectionSessions,
-        collectionRows: s.collectionRows,
         initialized: s.initialized,
       }),
     }
@@ -867,8 +884,6 @@ type PersistedDataState = Pick<
   | "salesReturns"
   | "salesReturnItems"
   | "ledger"
-  | "collectionSessions"
-  | "collectionRows"
   | "initialized"
 >;
 
@@ -882,8 +897,6 @@ const persistedDataKeys: (keyof PersistedDataState)[] = [
   "salesReturns",
   "salesReturnItems",
   "ledger",
-  "collectionSessions",
-  "collectionRows",
   "initialized",
 ];
 
@@ -897,8 +910,6 @@ const getPersistedDataSnapshot = (state: DataState): PersistedDataState => ({
   salesReturns: state.salesReturns,
   salesReturnItems: state.salesReturnItems,
   ledger: state.ledger,
-  collectionSessions: state.collectionSessions,
-  collectionRows: state.collectionRows,
   initialized: state.initialized,
 });
 
@@ -906,8 +917,8 @@ const samePersistedData = (left: PersistedDataState, right: PersistedDataState) 
   persistedDataKeys.every((key) => JSON.stringify(left[key]) === JSON.stringify(right[key]));
 
 const sameCashCollections = (
-  left: Pick<PersistedDataState, "collectionSessions" | "collectionRows">,
-  right: Pick<PersistedDataState, "collectionSessions" | "collectionRows">
+  left: { collectionSessions: CollectionSession[]; collectionRows: CollectionRow[] },
+  right: { collectionSessions: CollectionSession[]; collectionRows: CollectionRow[] }
 ) =>
   JSON.stringify(left.collectionSessions) === JSON.stringify(right.collectionSessions) &&
   JSON.stringify(left.collectionRows) === JSON.stringify(right.collectionRows);
@@ -920,8 +931,10 @@ let cloudReady = false;
 let lastCloudData: PersistedDataState | null = null;
 let cashSessionsReady = false;
 let cashRowsReady = false;
+let cashListenersStarted = false;
 
 const toPersistedDataState = (cloudState: Partial<PersistedDataState>): PersistedDataState => ({
+
   users: cloudState.users?.length ? cloudState.users : useData.getState().users,
   customers: cloudState.customers ?? [],
   products: cloudState.products ?? [],
@@ -931,8 +944,6 @@ const toPersistedDataState = (cloudState: Partial<PersistedDataState>): Persiste
   salesReturns: cloudState.salesReturns ?? [],
   salesReturnItems: cloudState.salesReturnItems ?? [],
   ledger: cloudState.ledger ?? [],
-  collectionSessions: cloudState.collectionSessions ?? [],
-  collectionRows: cloudState.collectionRows ?? [],
   initialized: cloudState.initialized ?? true,
 });
 
@@ -990,6 +1001,41 @@ const markCashCollectionsReady = () => {
   }
 };
 
+const attachCashCollectionListeners = () => {
+  if (cashListenersStarted) return;
+  cashListenersStarted = true;
+
+  onSnapshot(collection(db, "cashCollectionSessions"), (snapshot) => {
+    if (snapshot.metadata.hasPendingWrites) return;
+    cashSessionsReady = true;
+    markCashCollectionsReady();
+    const nextSessions = snapshot.docs.map((doc) => {
+      const data = doc.data() as CollectionSession;
+      return { ...data, id: doc.id };
+    });
+    applyRemoteCashCollectionState(nextSessions);
+  }, (error) => {
+    console.error("cashCollectionSessions snapshot error", error);
+    cashSessionsReady = true;
+    markCashCollectionsReady();
+  });
+
+  onSnapshot(collection(db, "cashCollectionRows"), (snapshot) => {
+    if (snapshot.metadata.hasPendingWrites) return;
+    cashRowsReady = true;
+    markCashCollectionsReady();
+    const nextRows = snapshot.docs.map((doc) => {
+      const data = doc.data() as CollectionRow;
+      return { ...data, id: doc.id };
+    });
+    applyRemoteCashCollectionState(undefined, nextRows);
+  }, (error) => {
+    console.error("cashCollectionRows snapshot error", error);
+    cashRowsReady = true;
+    markCashCollectionsReady();
+  });
+};
+
 const saveCashCollectionsNow = () => {
   if (applyingRemoteCashCollection) return;
   const { collectionSessions, collectionRows } = useData.getState();
@@ -998,6 +1044,7 @@ const saveCashCollectionsNow = () => {
     ...collectionRows.map((row) => setDoc(cashCollectionRowDoc(row.id), row, { merge: true })),
   ]);
 };
+
 
 const deleteCashCollectionRows = (rowIds: string[]) => {
   if (rowIds.length === 0) return;
@@ -1023,6 +1070,7 @@ export const initializeFirebaseBackend = () => {
       if (!users.some((user) => user.id === profile.id)) {
         useData.setState({ users: [profile, ...users] });
       }
+      attachCashCollectionListeners();
     } catch {
       useAuth.setState({ user: null, authReady: true });
     }
@@ -1065,27 +1113,10 @@ export const initializeFirebaseBackend = () => {
     applyingRemoteData = true;
     useData.setState(nextState);
     applyingRemoteData = false;
+  }, (error) => {
+    console.error("app state snapshot error", error);
   });
 
-  onSnapshot(collection(db, "cashCollectionSessions"), (snapshot) => {
-    if (snapshot.metadata.hasPendingWrites) return;
-    cashSessionsReady = true;
-    markCashCollectionsReady();
-    const nextSessions = snapshot.docs.map((doc) => {
-      const data = doc.data() as CollectionSession;
-      return { ...data, id: doc.id };
-    });
-    applyRemoteCashCollectionState(nextSessions);
-  });
-
-  onSnapshot(collection(db, "cashCollectionRows"), (snapshot) => {
-    if (snapshot.metadata.hasPendingWrites) return;
-    cashRowsReady = true;
-    markCashCollectionsReady();
-    const nextRows = snapshot.docs.map((doc) => {
-      const data = doc.data() as CollectionRow;
-      return { ...data, id: doc.id };
-    });
-    applyRemoteCashCollectionState(undefined, nextRows);
-  });
+  attachCashCollectionListeners();
 };
+
