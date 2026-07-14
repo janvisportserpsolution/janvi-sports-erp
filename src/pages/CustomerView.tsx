@@ -12,6 +12,8 @@ import {
   Receipt,
   Undo2,
   Plus,
+  Mail,
+  Download,
   MessageSquare,
 } from "lucide-react";
 import { formatCurrency, formatDate } from "../utils/id";
@@ -34,6 +36,13 @@ export default function CustomerView() {
   const user = useAuth((s) => s.user);
   const navigate = useNavigate();
 
+  const toE164WithoutPlus = (mobile: string) => {
+    const digits = mobile.replace(/\D/g, "");
+    if (digits.startsWith("91") && digits.length >= 12) return digits;
+    if (digits.length === 10) return `91${digits}`;
+    return digits;
+  };
+
   const [payOpen, setPayOpen] = useState(false);
   const [payAmt, setPayAmt] = useState(0);
   const [payNote, setPayNote] = useState("");
@@ -46,6 +55,130 @@ export default function CustomerView() {
     const totalReturns = returns.reduce((s, r) => s + r.total_amount, 0);
     return { totalPurchases, totalPaid, totalReturns };
   }, [invoices, returns, ledger]);
+
+  const buildCustomerLedgerDoc = async () => {
+    if (!customer) throw new Error("No customer selected");
+    const entries = [...ledger].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const rows = entries.map((entry) => [
+      formatDate(entry.created_at),
+      entry.reference_number || "-",
+      entry.entry_type,
+      entry.debit > 0 ? formatCurrency(entry.debit) : "-",
+      entry.credit > 0 ? formatCurrency(entry.credit) : "-",
+      formatCurrency(entry.balance_after),
+    ]);
+    const totalDebit = entries.reduce((sum, entry) => sum + entry.debit, 0);
+    const totalCredit = entries.reduce((sum, entry) => sum + entry.credit, 0);
+    const fileName = `Ledger_${customer.name.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
+
+    const docDefinition = {
+      pageSize: "A4",
+      pageMargins: [40, 40, 40, 60],
+      content: [
+        {
+          columns: [
+            [
+              { text: "JANVI SPORTS", style: "title" },
+              { text: customer.address || "", style: "subtle" },
+              { text: `Phone: ${customer.mobile}`, style: "subtle" },
+              { text: customer.email ? `Email: ${customer.email}` : "Email: -", style: "subtle" },
+            ],
+            [
+              { text: "Ledger Statement", style: "docHeader", alignment: "right" },
+              { text: formatDate(new Date().toISOString()), style: "docSubheader", alignment: "right" },
+            ],
+          ],
+        },
+        { text: "\n" },
+        {
+          table: {
+            headerRows: 1,
+            widths: [70, 90, 90, 60, 60, 80],
+            body: [
+              [
+                { text: "Date", style: "tableHeader" },
+                { text: "Voucher", style: "tableHeader" },
+                { text: "Type", style: "tableHeader" },
+                { text: "Debit", style: "tableHeader" },
+                { text: "Credit", style: "tableHeader" },
+                { text: "Balance", style: "tableHeader" },
+              ],
+              ...rows,
+              [
+                { text: "Totals", colSpan: 3, style: "tableTotal" },
+                {},
+                {},
+                { text: formatCurrency(totalDebit), style: "tableTotal", alignment: "right" },
+                { text: formatCurrency(totalCredit), style: "tableTotal", alignment: "right" },
+                { text: "", style: "tableTotal" },
+              ],
+            ],
+          },
+          layout: {
+            fillColor: (rowIndex: number) => (rowIndex === 0 ? "#f8fafc" : undefined),
+          },
+        },
+      ],
+      styles: {
+        title: { fontSize: 18, bold: true },
+        docHeader: { fontSize: 14, bold: true },
+        docSubheader: { fontSize: 10, color: "#475569" },
+        subtle: { fontSize: 10, color: "#64748b" },
+        tableHeader: { bold: true, fontSize: 9, color: "#1f2937" },
+        tableTotal: { bold: true, fontSize: 10 },
+      },
+    };
+
+    const pdfMakeModule = await import("pdfmake/build/pdfmake");
+    const pdfFontsModule = await import("pdfmake/build/vfs_fonts");
+    const pdfMake = (pdfMakeModule.default ?? pdfMakeModule) as any;
+    const pdfFonts = (pdfFontsModule.default ?? pdfFontsModule) as any;
+    pdfMake.vfs = pdfFonts.pdfMake?.vfs ?? pdfFonts.vfs ?? pdfFonts;
+    return { pdfMake, docDefinition, fileName };
+  };
+
+  const handleDownloadCustomerLedger = async () => {
+    if (!customer) return;
+    try {
+      const { pdfMake, docDefinition, fileName } = await buildCustomerLedgerDoc();
+      pdfMake.createPdf(docDefinition).download(fileName);
+    } catch (error: any) {
+      alert(`Download failed: ${error?.message || "Unknown error"}`);
+    }
+  };
+
+  const handleEmailCustomerLedger = () => {
+    if (!customer?.email) {
+      alert("Customer email is required");
+      return;
+    }
+
+    const subject = encodeURIComponent(`Ledger Statement – ${customer.name}`);
+    const body = encodeURIComponent(
+      `Dear ${customer.name},\n\nPlease find your ledger statement attached for your review.\n\nRegards,\nJANVI SPORTS`
+    );
+
+    window.open(`mailto:${encodeURIComponent(customer.email)}?subject=${subject}&body=${body}`, "_blank");
+  };
+
+  const handleWhatsappCustomerLedger = () => {
+    if (!customer?.mobile) {
+      alert("Customer mobile is required");
+      return;
+    }
+
+    const phone = toE164WithoutPlus(customer.mobile);
+    if (!phone) {
+      alert("Valid customer mobile number is required");
+      return;
+    }
+
+    const message = encodeURIComponent(
+      `Dear ${customer.name},\n\nPlease find your ledger statement attached for your review.\n\nRegards,\nJANVI SPORTS`
+    );
+
+    window.open(`https://api.whatsapp.com/send/?phone=${phone}&text=${message}&type=phone_number&app_absent=0`, "_blank");
+  };
 
   if (!customer) {
     return (
@@ -73,10 +206,24 @@ export default function CustomerView() {
             <Plus size={14} /> Record Payment
           </button>
           <button
-            onClick={() => navigate(`/statements?customer=${customer.id}`)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-200"
+            onClick={handleDownloadCustomerLedger}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
           >
-            <MessageSquare size={14} /> Send Statement
+            <Download size={14} /> Download PDF
+          </button>
+          <button
+            type="button"
+            onClick={handleEmailCustomerLedger}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <Mail size={14} /> Email
+          </button>
+          <button
+            type="button"
+            onClick={handleWhatsappCustomerLedger}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <MessageSquare size={14} /> WhatsApp
           </button>
         </div>
       </div>

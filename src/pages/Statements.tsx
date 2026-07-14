@@ -38,6 +38,8 @@ export default function Statements() {
   const [customerQuery, setCustomerQuery] = useState("");
   const [searchParams] = useSearchParams();
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(customers[0]?.id || "");
+  const [pendingAction, setPendingAction] = useState<"download" | "email" | "whatsapp" | null>(null);
+  const [actionHandled, setActionHandled] = useState(false);
   const [mode, setMode] = useState<"single" | "range">("single");
   const [singleDate, setSingleDate] = useState(new Date().toISOString().slice(0, 10));
   const [fromDate, setFromDate] = useState(new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().slice(0, 10));
@@ -60,8 +62,12 @@ export default function Statements() {
 
   useEffect(() => {
     const customerParam = searchParams.get("customer");
+    const actionParam = searchParams.get("action");
     if (customerParam && customers.some((c) => c.id === customerParam)) {
       setSelectedCustomerId(customerParam);
+    }
+    if (actionParam === "download" || actionParam === "email" || actionParam === "whatsapp") {
+      setPendingAction(actionParam);
     }
   }, [customers, searchParams]);
 
@@ -108,6 +114,27 @@ export default function Statements() {
       periodLabel: formatPeriodLabel(mode, mode === "single" ? singleDate : fromDate, mode === "single" ? singleDate : toDate),
     };
   }, [selectedCustomer, ledger, mode, singleDate, fromDate, toDate]);
+
+  useEffect(() => {
+    if (!selectedCustomer) return;
+    setMobileDraft(selectedCustomer.mobile);
+    setEmailDraft(selectedCustomer.email ?? "");
+    setSubject(`Ledger Statement – ${selectedCustomer.name} – ${periodLabel}`);
+    setBody(`Dear ${selectedCustomer.name},\n\nPlease find attached your ledger statement for ${periodLabel}.\n\nRegards,\nJANVI SPORTS`);
+  }, [selectedCustomer, periodLabel]);
+
+  useEffect(() => {
+    if (!pendingAction || actionHandled || !selectedCustomer) return;
+
+    const runAction = async () => {
+      if (pendingAction === "download") await handleDownloadPdf();
+      if (pendingAction === "email") await handleEmailLedger();
+      if (pendingAction === "whatsapp") await handleWhatsappLedger();
+      setActionHandled(true);
+    };
+
+    runAction();
+  }, [pendingAction, actionHandled, selectedCustomer]);
 
   const previewRows = filteredLedger.map((entry) => (
     <tr key={entry.id} className="border-b border-slate-200 last:border-0">
@@ -241,9 +268,11 @@ export default function Statements() {
       },
     };
 
-    const pdfMake = (await import("pdfmake/build/pdfmake")).default as any;
-    const pdfFonts = (await import("pdfmake/build/vfs_fonts")).default as any;
-    pdfMake.vfs = pdfFonts.pdfMake.vfs;
+    const pdfMakeModule = await import("pdfmake/build/pdfmake");
+    const pdfFontsModule = await import("pdfmake/build/vfs_fonts");
+    const pdfMake = (pdfMakeModule.default ?? pdfMakeModule) as any;
+    const pdfFonts = (pdfFontsModule.default ?? pdfFontsModule) as any;
+    pdfMake.vfs = pdfFonts.pdfMake?.vfs ?? pdfFonts.vfs ?? pdfFonts;
     return { pdfMake, docDefinition, fileName: `Ledger_${customer.name.replace(/\s+/g, "_")}_${mode === "single" ? singleDate : fromDate}_${mode === "single" ? singleDate : toDate}.pdf` };
   };
 
@@ -271,6 +300,44 @@ export default function Statements() {
     }
   };
 
+  const handleEmailLedger = () => {
+    if (!selectedCustomer) {
+      setStatus((prev) => ({ ...prev, email: "No customer selected" }));
+      return;
+    }
+    if (!emailDraft.trim()) {
+      setStatus((prev) => ({ ...prev, email: "Customer email is required" }));
+      return;
+    }
+
+    const subjectLine = encodeURIComponent(subject || `Ledger Statement – ${selectedCustomer.name} – ${periodLabel}`);
+    const bodyText = encodeURIComponent(
+      body || `Dear ${selectedCustomer.name},\n\nPlease find your ledger statement for ${periodLabel}.\n\nRegards,\nJANVI SPORTS`
+    );
+
+    window.open(`mailto:${encodeURIComponent(emailDraft.trim())}?subject=${subjectLine}&body=${bodyText}`, "_blank");
+    setStatus((prev) => ({ ...prev, email: "Email draft opened" }));
+  };
+
+  const handleWhatsappLedger = () => {
+    if (!selectedCustomer) {
+      setStatus((prev) => ({ ...prev, whatsapp: "No customer selected" }));
+      return;
+    }
+    const phone = toE164WithoutPlus(mobileDraft.trim());
+    if (!phone) {
+      setStatus((prev) => ({ ...prev, whatsapp: "Customer mobile is required" }));
+      return;
+    }
+
+    const msg = encodeURIComponent(
+      body || `Dear ${selectedCustomer.name},\n\nPlease find your ledger statement for ${periodLabel}.\n\nRegards,\nJANVI SPORTS`
+    );
+
+    window.open(`https://api.whatsapp.com/send/?phone=${phone}&text=${msg}&type=phone_number&app_absent=0`, "_blank");
+    setStatus((prev) => ({ ...prev, whatsapp: "WhatsApp chat opened" }));
+  };
+
   const handleSend = async () => {
     setSending(true);
     setStatus({});
@@ -290,7 +357,7 @@ export default function Statements() {
       updateCustomer(selectedCustomer.id, { mobile: contact.mobile, email: contact.email });
     }
 
-    const { pdfMake, docDefinition, fileName } = await buildDocDefinition();
+    const { pdfMake, docDefinition } = await buildDocDefinition();
 
     // Create PDF blob for download; we also try to attach via mailto/whatsapp links (browser limitations)
     const pdfBlob: Blob = await new Promise((res) => {
@@ -584,11 +651,20 @@ export default function Statements() {
                         <Download size={16} /> Download PDF
                       </button>
                       <button
-                        onClick={handleSend}
-                        disabled={!selectedCustomer || (!emailChecked && !whatsappChecked && !printChecked) || sending}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-orange-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                        type="button"
+                        onClick={handleEmailLedger}
+                        disabled={!selectedCustomer || !emailDraft.trim()}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-200"
                       >
-                        <Send size={16} /> {sending ? "Sending..." : "Send Statement"}
+                        <Mail size={16} /> Send Email
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleWhatsappLedger}
+                        disabled={!selectedCustomer || !mobileDraft.trim()}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:bg-slate-200"
+                      >
+                        <MessageSquare size={16} /> Send WhatsApp
                       </button>
                     </div>
                   </div>
