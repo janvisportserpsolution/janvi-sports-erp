@@ -29,6 +29,8 @@ export default function Collections() {
   const navigate = useNavigate();
   const sessions = useData((s) => s.collectionSessions);
   const rows = useData((s) => s.collectionRows);
+  const cashReady = useData((s) => s.cashCollectionsReady);
+  const cashSyncedAt = useData((s) => s.cash_last_synced_at);
   const syncReady = useData((s) => s.syncReady);
   const createCollectionSession = useData((s) => s.createCollectionSession);
   const deleteCollectionSession = useData((s) => s.deleteCollectionSession);
@@ -101,10 +103,11 @@ export default function Collections() {
     pushToast({ type: "success", title: "Session reopened", message: `${label} is editable again.` });
   };
 
-  if (!syncReady) {
+  if (!syncReady || !cashReady) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-600">
         Loading daily collections...
+        {cashSyncedAt && <div className="mt-2 text-xs text-slate-400">Last cloud sync: {cashSyncedAt}</div>}
       </div>
     );
   }
@@ -157,6 +160,9 @@ export default function Collections() {
                 <Plus size={17} /> Start New Collection
                 <div className="absolute inset-0 rounded-2xl bg-white/15 opacity-0 transition-opacity group-hover:opacity-100" />
               </button>
+              {cashSyncedAt && (
+                <div className="ml-3 self-center text-xs text-slate-400">Last sync: {cashSyncedAt}</div>
+              )}
             </div>
           </div>
 
